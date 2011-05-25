@@ -92,6 +92,10 @@ class Web
     update_positions
   end
   
+  def lookup_thought(id)
+    @thoughts.find{|t| t.iden == id}
+  end
+  
   def update_positions
     desiredSpacing = ((@width+@height)/@thoughts.size.to_f)**(1/3.0)
     minDim = @width > @height ? @height : @width
@@ -208,7 +212,22 @@ print "KE: #{ke} timestep: #{timestep}\n"
 	      </svg:textPath>
 	    </svg:text>
 	  </svg:g>
-	</svg:a>\
+	</svg:a>
+	<svg:a xlink:href="/view/#{t.iden}">
+	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
+	    <svg:text x="10" y="0" rotate="180" font-family="Verdana" font-size="20" fill="black" >
+	      V
+	    </svg:text>
+	  </svg:g>
+	</svg:a>
+	<svg:a xlink:href="/edit/#{t.iden}">
+	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
+	    <svg:text x="-15" y="0" rotate="180" font-family="Verdana" font-size="20" fill="black" >
+	      E
+	    </svg:text>
+	  </svg:g>
+	</svg:a>
+	\
     end
 
     svg << %Q\
@@ -266,6 +285,20 @@ get '/web' do
   haml :web
 end
 
+get '/edit/:iden' do
+  content_type 'application/xml', :charset => 'utf-8'
+  iden = params[:iden]
+  $thought = $web.lookup_thought(iden)
+  haml :edit
+end
+
+get '/view/:iden' do
+  content_type 'application/xml', :charset => 'utf-8'
+  iden = params[:iden]
+  $thought = $web.lookup_thought(iden)
+  haml :view
+end
+
 get '/select/:iden' do
   iden = params[:iden]
   $web.toggle_select(iden)
@@ -291,6 +324,13 @@ post '/new' do
   title = params[:title]
   comment = params[:comment]
   $web.add_thought(Thought.new(title,comment))
+  redirect '/web'
+end
+
+post '/save_edit' do
+  #$thought was already set to the thought we want in get '/edit/:iden'
+  $thought.title = params[:title]
+  $thought.comment = params[:comment]
   redirect '/web'
 end
 
@@ -320,7 +360,7 @@ __END__
 
 @@ web
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
-%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en", :lang => "en"}
+%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
   %head
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
@@ -335,7 +375,65 @@ __END__
           %input{:name=>'title', :size=>'40', :type=>'text'} 
           Text:
           %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}
-          %input{:type=>'submit', :value=>'Save'}   
+          %input{:type=>'submit', :value=>'Create Thought'}   
+    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
+      %p{:style=>"text-align: center;"}
+        %a{:href=>'/link'}="Link" 
+        %a{:href=>'/unlink'}="Unlink" 
+        %a{:href=>'/delete'}="Delete" 
+        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/undo'}="Undo" 
+        %a{:href=>'/redo'}="Redo"
+
+@@ edit
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
+%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
+  %head
+    %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    %title="ThoughtWeb"
+  %body{:style=>"margin: 0px;"}
+    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
+      =$web.to_svg("")
+    %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
+      %h2 Edit
+      %form{:action=>'/save_edit', :method=>'post'} 
+        %p
+          Title:
+          %input{:name=>'title', :size=>'40', :type=>'text', :value=>$thought.title}
+          Text:
+          %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}=$thought.comment
+          %input{:type=>'submit', :value=>'Save Changes'}
+      %p
+        %a{:href=>'/web'}="New Thought"
+    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
+      %p{:style=>"text-align: center;"}
+        %a{:href=>'/link'}="Link" 
+        %a{:href=>'/unlink'}="Unlink" 
+        %a{:href=>'/delete'}="Delete" 
+        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/undo'}="Undo" 
+        %a{:href=>'/redo'}="Redo"
+
+@@ view
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
+%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
+  %head
+    %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    %title="ThoughtWeb"
+  %body{:style=>"margin: 0px;"}
+    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
+      =$web.to_svg("")
+    %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
+      %h2 View
+      %p
+        Title: 
+        =$thought.title
+        %br
+        Text: 
+        =$thought.comment
+      %p
+        %a{:href=>'/web'}="New Thought"
+        %a{:href=>"/edit/#{$thought.iden}"}="Edit Thought"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
       %p{:style=>"text-align: center;"}
         %a{:href=>'/link'}="Link" 
