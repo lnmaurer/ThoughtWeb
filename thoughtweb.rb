@@ -75,6 +75,7 @@ class Web
       @recent = []
       @selected = []
       @positions = []
+      @center = nil
     else
       
     end
@@ -102,6 +103,7 @@ class Web
     potC = minDim*cos(PI/2*(minDim-50)/minDim)**2/sin(PI/2*(minDim-50)/minDim)
     chargeC = 1e7
     k = 1e2
+    centeringC = 1e3
     restLength = 200
     m = 0.01
     w = (@width-100)/2.0
@@ -122,6 +124,7 @@ class Web
 	y = pos[1]
 	
 	#force due to potential
+	#from cosh potential
 	force = Vector[-sin(PI/2*x/w)/cos(PI/2*x/w)**2, -sin(PI/2*y/h)/cos(PI/2*y/h)**2]*potC
 	
 	#force due to springs
@@ -137,6 +140,12 @@ class Web
 	    r = pos - pos2
 	    force += r.unit*chargeC/r.length**2
 	  end
+	end
+	
+	#TODO: TAKE THIS OUTSIDE OF LOOP
+	#force to center a thought -- like a spring with zero rest length pulling towards center
+	if @thoughts[i].iden == @center
+	  force += pos*(-1)*centeringC
 	end
 
 	forces << force
@@ -176,6 +185,16 @@ print "KE: #{ke} timestep: #{timestep}\n"
     
   end
   
+  #sets iden to center if it's not. Clear center if it is
+  def toggle_center(iden)
+    if @center == iden
+      @center = nil
+    else
+      @center = iden
+    end
+    update_positions
+  end
+  
   def to_svg(search="")
     svg = %Q&
       <svg:svg width="#{@width}px" height="#{@height}px" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1">
@@ -212,21 +231,20 @@ print "KE: #{ke} timestep: #{timestep}\n"
 	      </svg:textPath>
 	    </svg:text>
 	  </svg:g>
-	</svg:a>
-	<svg:a xlink:href="/view/#{t.iden}">
-	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
-	    <svg:text x="10" y="0" rotate="180" font-family="Verdana" font-size="20" fill="black" >
-	      V
+	</svg:a>	
+	<svg:g transform="translate(#{p[0]},#{p[1]}) scale(1,-1)">
+	    <svg:text x="-30" y="0" font-family="Verdana" font-size="20" fill="black" >
+	      <svg:a xlink:href="/view/#{t.iden}">
+		V
+	      </svg:a>
+	      <svg:a xlink:href="/edit/#{t.iden}">
+		E
+	      </svg:a>
+	      <svg:a xlink:href="/center/#{t.iden}">
+		C
+	      </svg:a>
 	    </svg:text>
-	  </svg:g>
-	</svg:a>
-	<svg:a xlink:href="/edit/#{t.iden}">
-	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
-	    <svg:text x="-15" y="0" rotate="180" font-family="Verdana" font-size="20" fill="black" >
-	      E
-	    </svg:text>
-	  </svg:g>
-	</svg:a>
+	</svg:g>
 	\
     end
 
@@ -297,6 +315,12 @@ get '/view/:iden' do
   iden = params[:iden]
   $thought = $web.lookup_thought(iden)
   haml :view
+end
+
+get '/center/:iden' do
+  iden = params[:iden]
+  $web.toggle_center(iden)
+  redirect '/web'
 end
 
 get '/select/:iden' do
