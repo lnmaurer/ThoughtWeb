@@ -1,11 +1,11 @@
 #require 'svg/svg'
+require 'matrix'
 require 'rubygems'
 require 'haml'
 require 'sinatra'
 require 'uuid'
 require 'yaml'
-require 'matrix'
-require 'ferret' #actually using jk-ferret gem
+require 'ferret' #actually using the 'jk-ferret' gem
 include Math
 include Ferret
 
@@ -18,9 +18,9 @@ end
 
 class Thought
   attr_reader :title, :comment, :docs, :links, :iden, :times
-  attr_accessor :position
-  def initialize(index, position, title, comment)#, docs)
-    @index = index
+  attr_accessor :position, :searchScore
+  def initialize(web, position, title, comment)#, docs)
+    @web = web
     @position = position
     @title = title
     @comment = comment
@@ -29,46 +29,64 @@ class Thought
     @iden = $uuid.generate
     @times = []
     
+    @searchScore = 0.0
+    
     update_times_and_index
   end
   
   def update_times_and_index
+    #update the time
     @times << Time.new
-    @index.delete(@iden)
-    @index << {:id=>@iden, :title=>@title, :comment=>@comment, :update_time=>@times[-1].to_s}
+    #update the index
+    @web.index.delete(@iden)
+    @web.index << {:id=>@iden, :title=>@title, :comment=>@comment, :update_time=>@times[-1].to_s}
+    #signal that the search results need updating
+    @web.searchNeedsUpdate = true
   end
   
   def link(idens)
+    changesMade = false
     idens.each do |iden| #also works with idens as a string containing just one iden?
       unless @links.include?(iden) or iden == @iden
 	@links << iden
-	update_times_and_index
+        changesMade = true
       end
     end
+    
+    #this way, we only call update_times_and_index once even if multiple changes were made
+    update_times_and_index if changesMade
   end
   
   def unlink(idens)
+    changesMade = false
     idens.each do |iden| #also works with idens as a string containing just one iden?
       if @links.include?(iden)
 	@links.delete(iden)
-	update_times_and_index
+	changesMade = true
       end    
     end
+    
+    update_times_and_index if changesMade
   end
   
   def comment=(c)
-    @comment = c
-    update_times_and_index
+    if @comment != c
+      @comment = c
+      update_times_and_index
+    end
   end
   
   def title=(t)
-    @title = t
-    update_times_and_index
+    if @title != t
+      @title = t
+      update_times_and_index
+    end
   end
 end
 
 class Web
-  attr_reader :file, :thoughts, :index
+  attr_reader :file, :thoughts, :index, :searchTerm
+  attr_accessor :searchNeedsUpdate
   def initialize(width, height, file = nil)
     if file==nil
       @index = Index::Index.new() #TODO: make persistent
@@ -76,22 +94,16 @@ class Web
       @recent = []
       @selected = []
       @center = nil
+      @searchType = :none
+      @searchTerm = ""
+      @searchNeedsUpdate = false
     else
       
     end
     @width = width -5
     @height = height -5
   end
-  
-#   def position(iden)
-#     @positions[@thoughts.find_index{|t| t.iden == iden}]
-#   end
-  
-  def add_thought(title,comment)
-    @thoughts << Thought.new(@index, Vector[(@width-100)*(rand-0.5),(@height-100)*(rand-0.5)], title, comment)
-    update_positions
-  end
-  
+
   def lookup_thought(id)
     @thoughts.find{|t| t.iden == id}
   end
@@ -269,13 +281,19 @@ print "KE: #{ke} timestep: #{timestep}\n"
     end
   end
 
+  def add_thought(title,comment)
+    @thoughts << Thought.new(self, Vector[(@width-100)*(rand-0.5),(@height-100)*(rand-0.5)], title, comment)
+    update_positions
+  end  
+  
   def delete_selected
     @thoughts.each{|th| th.unlink(@selected)} #delete any links to the selected thoughts
     @selected.each do |id|
       @index.delete(id) #delete each selected thought from @index
       @thoughts.delete_if{|th| th.iden == id} #then delete from @thoughts
     end
-    deselect_all
+    deselect_all #otherwise the deleted thoughts will still be in @selected, causing problems later
+    @searchNeedsUpdate = true
     update_positions
   end
   
@@ -293,12 +311,77 @@ print "KE: #{ke} timestep: #{timestep}\n"
     @selected = []
   end
   
+  def repeat_search
+    if @searchType == :simple
+      simple_search
+    elsif @searchType == :assoc
+      association_search
+    elsif @searchType == :diff
+      difference_search
+    end
+  end
+  
+#TODO: CHECK TO SEE IF OLD SEARCH RESULTS ARE STILL GOOD BEFORE SEARCHING?  
+  
+  def simple_search(st = nil)
+    @searchType = :simple
+    @searchTerm = st unless st == nil
+    
+    @thoughts.each{|th| th.searchScore = 0.0} #zero all scores since @index.search_each doesn't return 'id's with zero score
+    
+    @index.search_each(@searchTerm) do |id, score| #this id isn't the UUID asigned to the thought, but the location in @index
+      lookup_thought(@index[id][:id]).searchScore = score
+    end
+  end
+  
+  def find_scores(st)
+    simple_search(st)
+    
+    m = Matrix.build(@thoughts.size,@thoughts.size) do |row,col|
+      if row == col
+	1.0 #ones on the diagonal
+      elsif @thoughts[row].links.include?(@thoughts[col].iden)
+	#TODO: CHANGE FOR DIFFERENT LINK STRENGTHS
+	-0.1 #there's a link between them
+      else
+	0.0 #zero otherwise
+      end
+    end
+    
+    simpleScores = Matrix.column_vector(@thoughts.collect{|th| th.searchScore})
+    assocScores = m.inverse * simpleScores
+    
+    return simpleScores, assocScores
+  end
+  
+  def association_search(st = nil)
+    @searchType = :assoc
+    simpleScores, assocScores = find_scores(st)
+    @thoughts.zip(assocScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores   
+  end
+  
+  def difference_search(st = nil)
+    @searchType = :diff
+    simpleScores, assocScores = find_scores(st)
+    diffScores = assocScores - simpleScores
+    @thoughts.zip(diffScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores    
+    
+  end
+ 
+  #returns an array of [id, score] pairs sorted by score from highest to lowest. If the score is zero then the pair isn't returned
+  def sorted_search_results
+    if @searchNeedsUpdate
+      repeat_search
+      @searchNeedsUpdate = false
+    end
+    
+    #TODO: SORT_BY IS SUPPOSED TO BE SLOW? CHECK AND MOVE TO DIFFERENT SORT
+    @thoughts.collect{|th| [th.iden, th.searchScore]}.reject{|(th,sc)| sc == 0.0}.sort_by{|(id,sc)| -sc} #negative sign makes it sort from highest to lowest
+  end
 end
 
 #globals
 $uuid = UUID.new
-$searchTerm = ""
-$searchResults = []
 $redirect = '/web'
 
 get '/' do
@@ -324,15 +407,6 @@ end
 get '/search' do
   content_type 'application/xml', :charset => 'utf-8'
   $redirect = '/search'
-  
-  if $searchResults.size != 0
-    #redo the search because things might have changed since the last search
-    #TODO: FIND A WAY TO CHECK IF IT HAS CHANGED, AND ONLY REDO SEARCH IF IT HAS
-    $searchResults = []
-    $web.index.search_each($searchTerm) do |id, score|
-      $searchResults << [id, score]
-    end
-  end
   
   haml :search
 end
@@ -400,10 +474,15 @@ post '/save_edit' do
 end
 
 post '/search' do
-  $searchResults = []
-  $searchTerm = params[:searchterm]
-  $web.index.search_each($searchTerm) do |id, score|
-    $searchResults << [id, score]
+  searchTerm = params[:searchterm]
+  searchType = params[:searchtype]
+  #TODO: REPALCE WITH SWITCH?
+  if searchType == 'simple'
+    $web.simple_search(searchTerm)
+  elsif searchType == 'assoc'
+    $web.association_search(searchTerm)
+  elsif searchType == 'diff'
+    $web.difference_search(searchTerm)    
   end
   redirect $redirect
 end
@@ -525,19 +604,27 @@ __END__
       %form{:action=>'/search', :method=>'post'} 
         %p
           Search: 
-          %input{:name=>'searchterm', :size=>'40', :type=>'text', :value=>$searchTerm}
+          %input{:name=>'searchterm', :size=>'40', :type=>'text', :value=>$web.searchTerm}
           %input{:type=>'submit', :value=>'Search'}
           %br
-          Results: 
-          - $searchResults.each do |(id,score)|
-            %strong=$web.index[id][:title]
+          %input{:type=>'radio', :name=>'searchtype', :value=>'simple', :id=>'simple', :checked=>'checked'}
+          %label{:for=>'simple'}='Simple'
+          %input{:type=>'radio', :name=>'searchtype', :value=>'assoc', :id=>'assoc'}
+          %label{:for=>'assoc'}='Assoc'
+          %input{:type=>'radio', :name=>'searchtype', :value=>'diff', :id=>'diff'}
+          %label{:for=>'diff'}='Diff'
+          %br
+      %h3 Results:
+      %ol
+        - $web.sorted_search_results.each do |(id,score)|
+          %li
+            %strong=$web.lookup_thought(id).title
             with score
             =score
-            %a{:href=>"/view/#{$web.index[id][:id]}"}="V"
-            %a{:href=>"/edit/#{$web.index[id][:id]}"}="E"
-            %a{:href=>"/center/#{$web.index[id][:id]}"}="C" 
-            %a{:href=>"/select/#{$web.index[id][:id]}"}="S" 
-            %br
+            %a{:href=>"/view/#{id}"}="V"
+            %a{:href=>"/edit/#{id}"}="E"
+            %a{:href=>"/center/#{id}"}="C" 
+            %a{:href=>"/select/#{id}"}="S" 
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
       %p{:style=>"text-align: center;"}
         %a{:href=>'/link'}="Link" 
