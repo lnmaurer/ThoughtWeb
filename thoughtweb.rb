@@ -68,7 +68,7 @@ class Thought
 end
 
 class Web
-  attr_reader :file, :thoughts
+  attr_reader :file, :thoughts, :index
   def initialize(width, height, file = nil)
     if file==nil
       @index = Index::Index.new() #TODO: make persistent
@@ -297,6 +297,9 @@ end
 
 #globals
 $uuid = UUID.new
+$searchTerm = ""
+$searchResults = []
+$redirect = '/web'
 
 get '/' do
   content_type 'application/xml', :charset => 'utf-8'
@@ -308,18 +311,36 @@ get '/size/:width/:height' do
   width = params[:width].to_i
   height = params[:height].to_i
   $web = Web.new(width,height)
-  redirect '/web'
+  redirect $redirect
 end
 
 get '/web' do
   content_type 'application/xml', :charset => 'utf-8'
+  $redirect = '/web'
   redirect '/' if $web == nil #in case you visit /web before sizing
   haml :web
+end
+
+get '/search' do
+  content_type 'application/xml', :charset => 'utf-8'
+  $redirect = '/search'
+  
+  if $searchResults.size != 0
+    #redo the search because things might have changed since the last search
+    #TODO: FIND A WAY TO CHECK IF IT HAS CHANGED, AND ONLY REDO SEARCH IF IT HAS
+    $searchResults = []
+    $web.index.search_each($searchTerm) do |id, score|
+      $searchResults << [id, score]
+    end
+  end
+  
+  haml :search
 end
 
 get '/edit/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
   iden = params[:iden]
+  $redirect = '/edit/' + iden
   $thought = $web.lookup_thought(iden)
   haml :edit
 end
@@ -327,6 +348,7 @@ end
 get '/view/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
   iden = params[:iden]
+  $redirect = '/view/' + iden
   $thought = $web.lookup_thought(iden)
   haml :view
 end
@@ -334,52 +356,56 @@ end
 get '/center/:iden' do
   iden = params[:iden]
   $web.toggle_center(iden)
-  redirect '/web'
+  redirect $redirect
 end
 
 get '/select/:iden' do
   iden = params[:iden]
   $web.toggle_select(iden)
-  redirect '/web'
+  redirect $redirect
 end
 
 get '/delete' do
   $web.delete_selected
-  redirect '/web'
+  redirect $redirect
 end
 
 get '/link' do
   $web.link_selected
-  redirect '/web'
+  redirect $redirect
 end
 
 get '/unlink' do
   $web.unlink_selected
-  redirect '/web'
+  redirect $redirect
 end
 
 get '/deselect_all' do
   $web.deselect_all
-  redirect '/web'
+  redirect $redirect
 end
 
 post '/new' do
   title = params[:title]
   comment = params[:comment]
   $web.add_thought(title,comment)
-  redirect '/web'
+  redirect $redirect
 end
 
 post '/save_edit' do
   #$thought was already set to the thought we want in get '/edit/:iden'
   $thought.title = params[:title]
   $thought.comment = params[:comment]
-  redirect '/web'
+  redirect $redirect
 end
 
 post '/search' do
-  search = params[:search]
-  
+  $searchResults = []
+  $searchTerm = params[:searchterm]
+  $web.index.search_each($searchTerm) do |id, score|
+    $searchResults << [id, score]
+  end
+  redirect $redirect
 end
 
 __END__
@@ -425,8 +451,7 @@ __END__
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect_all'}="Deselect All" 
-        %a{:href=>'/undo'}="Undo" 
-        %a{:href=>'/redo'}="Redo"
+        %a{:href=>'/search'}="Search"
 
 @@ edit
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -454,8 +479,7 @@ __END__
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect_all'}="Deselect All" 
-        %a{:href=>'/undo'}="Undo" 
-        %a{:href=>'/redo'}="Redo"
+        %a{:href=>'/search'}="Search"
 
 @@ view
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -483,5 +507,39 @@ __END__
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect_all'}="Deselect All" 
-        %a{:href=>'/undo'}="Undo" 
-        %a{:href=>'/redo'}="Redo"
+        %a{:href=>'/search'}="Search"
+
+@@ search
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
+%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
+  %head
+    %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    %title="ThoughtWeb"
+  %body{:style=>"margin: 0px;"}
+    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
+      =$web.to_svg("")
+    %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
+      %h2 Search
+      %form{:action=>'/search', :method=>'post'} 
+        %p
+          Search: 
+          %input{:name=>'searchterm', :size=>'40', :type=>'text', :value=>$searchTerm}
+          %input{:type=>'submit', :value=>'Search'}
+          %br
+          Results: 
+          - $searchResults.each do |(id,score)|
+            %strong=$web.index[id][:title]
+            with score
+            =score
+            %a{:href=>"/view/#{$web.index[id][:id]}"}="V"
+            %a{:href=>"/edit/#{$web.index[id][:id]}"}="E"
+            %a{:href=>"/center/#{$web.index[id][:id]}"}="C" 
+            %a{:href=>"/select/#{$web.index[id][:id]}"}="S" 
+            %br
+    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
+      %p{:style=>"text-align: center;"}
+        %a{:href=>'/link'}="Link" 
+        %a{:href=>'/unlink'}="Unlink" 
+        %a{:href=>'/delete'}="Delete" 
+        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/web'}="New Thought"
