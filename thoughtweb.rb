@@ -473,6 +473,7 @@ __END__
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
         %a{:href=>'/web'}="New Thought"
+        %a{:href=>"/select/#{$thought.iden}"}="Select"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
       %p{:style=>"text-align: center;"}
         %a{:href=>'/link'}="Link" 
@@ -501,6 +502,7 @@ __END__
       %p
         %a{:href=>'/web'}="New Thought"
         %a{:href=>"/edit/#{$thought.iden}"}="Edit Thought"
+        %a{:href=>"/select/#{$thought.iden}"}="Select"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
       %p{:style=>"text-align: center;"}
         %a{:href=>'/link'}="Link" 
