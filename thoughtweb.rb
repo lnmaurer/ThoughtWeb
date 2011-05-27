@@ -15,7 +15,6 @@ class Vector
   end
 end
 
-
 class Thought
   attr_reader :title, :comment, :docs, :links, :iden, :times
   attr_accessor :position, :searchScore
@@ -85,26 +84,40 @@ class Thought
 end
 
 class Web
-  attr_reader :file, :thoughts, :index, :searchTerm, :searchType
-  attr_accessor :searchNeedsUpdate, :colorBySearch
-  def initialize(width, height, file = nil)
-    if file==nil
-      @index = Index::Index.new() #TODO: make persistent
-      @thoughts = []
-      @recent = []
-      @selected = []
-      @center = nil
-      @searchType = :simple
-      @searchTerm = ""
-      @searchNeedsUpdate = false
-      @colorBySearch = false
-    else
-      
-    end
-    @width = width -5
-    @height = height -5
+  attr_reader :file, :thoughts, :searchTerm, :searchType
+  attr_accessor :index, :searchNeedsUpdate, :colorBySearch
+  
+  def self.load(file)
+    web = YAML.load(File.open(file))
+    web.index = Index::Index.new(:path=> 'test.ferret') #TODO: MAKE GENERAL
+    return web
+  end
+  
+  def save(file)
+    File.open(file, "w") {|f| f.write(self.to_yaml) }
+    @index.flush
+  end
+  
+  def initialize(width, height)
+    @index = Index::Index.new(:path=> 'test.ferret') #TODO: MAKE GENERAL
+    @thoughts = []
+    @recent = []
+    @selected = []
+    @center = nil
+    @searchType = :simple
+    @searchTerm = ""
+    @searchNeedsUpdate = false
+    @colorBySearch = false
+    @width = width - 5
+    @height = height - 5
   end
 
+  def set_width_height(w,h)
+    @width = w - 5
+    @height = h - 5
+    update_positions
+  end
+  
   def lookup_thought(id)
     @thoughts.find{|t| t.iden == id}
   end
@@ -191,16 +204,12 @@ class Web
 	count = 0
 	timestep *=1.0625
       end
-print "KE: #{ke} timestep: #{timestep}\n"
+# print "KE: #{ke} timestep: #{timestep}\n"
 
       #store the new positions in the thoughts
       @thoughts.zip(newPos).each{|(th,pos)| th.position = pos}
 
     end while ke > timestep*@thoughts.size/10.0
-  end
-  
-  def to_yaml
-    
   end
   
   #sets iden to center if it's not. Clear center if it is
@@ -395,7 +404,9 @@ end
 get '/size/:width/:height' do
   width = params[:width].to_i
   height = params[:height].to_i
-  $web = Web.new(width,height)
+#   $web = Web.new(width,height)    
+  $web = Web.load('test.yml') #TODO: MAKE GENERAL
+  $web.set_width_height(width,height)
   redirect $redirect
 end
 
@@ -455,8 +466,13 @@ get '/unlink' do
   redirect $redirect
 end
 
-get '/deselect_all' do
+get '/deselect' do
   $web.deselect_all
+  redirect $redirect
+end
+
+get '/save' do
+  $web.save('test.yml') #TODO: MAKE GENERAL
   redirect $redirect
 end
 
@@ -530,8 +546,9 @@ __END__
         %a{:href=>'/link'}="Link" 
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/save'}="Save"
 
 @@ edit
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -559,8 +576,9 @@ __END__
         %a{:href=>'/link'}="Link" 
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/save'}="Save"
 
 @@ view
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -588,8 +606,9 @@ __END__
         %a{:href=>'/link'}="Link" 
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/save'}="Save"
 
 @@ search
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -639,5 +658,6 @@ __END__
         %a{:href=>'/link'}="Link" 
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect_all'}="Deselect All" 
+        %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/web'}="New Thought"
+        %a{:href=>'/save'}="Save"
