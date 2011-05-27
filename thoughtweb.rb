@@ -85,8 +85,8 @@ class Thought
 end
 
 class Web
-  attr_reader :file, :thoughts, :index, :searchTerm
-  attr_accessor :searchNeedsUpdate
+  attr_reader :file, :thoughts, :index, :searchTerm, :searchType
+  attr_accessor :searchNeedsUpdate, :colorBySearch
   def initialize(width, height, file = nil)
     if file==nil
       @index = Index::Index.new() #TODO: make persistent
@@ -94,9 +94,10 @@ class Web
       @recent = []
       @selected = []
       @center = nil
-      @searchType = :none
+      @searchType = :simple
       @searchTerm = ""
       @searchNeedsUpdate = false
+      @colorBySearch = false
     else
       
     end
@@ -212,7 +213,9 @@ print "KE: #{ke} timestep: #{timestep}\n"
     update_positions
   end
   
-  def to_svg(search="")
+  def to_svg
+    repeat_search if @colorBySearch and @searchNeedsUpdate
+    
     svg = %Q&
       <svg:svg width="#{@width}px" height="#{@height}px" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1">
         <svg:g transform="translate(#{(@width-5)/2.0},#{(@height-5)/2.0}) scale(1,-1)"> 
@@ -333,7 +336,7 @@ print "KE: #{ke} timestep: #{timestep}\n"
       lookup_thought(@index[id][:id]).searchScore = score
     end
   end
-  
+
   def find_scores(st)
     simple_search(st)
     
@@ -355,17 +358,16 @@ print "KE: #{ke} timestep: #{timestep}\n"
   end
   
   def association_search(st = nil)
-    @searchType = :assoc
     simpleScores, assocScores = find_scores(st)
-    @thoughts.zip(assocScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores   
+    @thoughts.zip(assocScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores  
+    @searchType = :assoc #need this at end because find_scores does a simple search
   end
   
   def difference_search(st = nil)
-    @searchType = :diff
     simpleScores, assocScores = find_scores(st)
     diffScores = assocScores - simpleScores
-    @thoughts.zip(diffScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores    
-    
+    @thoughts.zip(diffScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores  
+    @searchType = :diff #need this at end because find_scores does a simple search
   end
  
   #returns an array of [id, score] pairs sorted by score from highest to lowest. If the score is zero then the pair isn't returned
@@ -407,7 +409,6 @@ end
 get '/search' do
   content_type 'application/xml', :charset => 'utf-8'
   $redirect = '/search'
-  
   haml :search
 end
 
@@ -514,7 +515,7 @@ __END__
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg("")
+      =$web.to_svg
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 New
       %form{:action=>'/new', :method=>'post'} 
@@ -540,7 +541,7 @@ __END__
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg("")
+      =$web.to_svg
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit
       %form{:action=>'/save_edit', :method=>'post'} 
@@ -569,7 +570,7 @@ __END__
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg("")
+      =$web.to_svg
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 View
       %p
@@ -598,7 +599,7 @@ __END__
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg("")
+      =$web.to_svg
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Search
       %form{:action=>'/search', :method=>'post'} 
@@ -607,13 +608,21 @@ __END__
           %input{:name=>'searchterm', :size=>'40', :type=>'text', :value=>$web.searchTerm}
           %input{:type=>'submit', :value=>'Search'}
           %br
-          %input{:type=>'radio', :name=>'searchtype', :value=>'simple', :id=>'simple', :checked=>'checked'}
+          - if $web.searchType == :simple
+            %input{:type=>'radio', :name=>'searchtype', :value=>'simple', :id=>'simple', :checked=>'checked'}
+          - else
+            %input{:type=>'radio', :name=>'searchtype', :value=>'simple', :id=>'simple'}
           %label{:for=>'simple'}='Simple'
-          %input{:type=>'radio', :name=>'searchtype', :value=>'assoc', :id=>'assoc'}
+          - if $web.searchType == :assoc
+            %input{:type=>'radio', :name=>'searchtype', :value=>'assoc', :id=>'assoc', :checked=>'checked'}
+          - else
+            %input{:type=>'radio', :name=>'searchtype', :value=>'assoc', :id=>'assoc'}
           %label{:for=>'assoc'}='Assoc'
-          %input{:type=>'radio', :name=>'searchtype', :value=>'diff', :id=>'diff'}
+          - if $web.searchType == :diff
+            %input{:type=>'radio', :name=>'searchtype', :value=>'diff', :id=>'diff', :checked=>'checked'}
+          - else
+            %input{:type=>'radio', :name=>'searchtype', :value=>'diff', :id=>'diff'}
           %label{:for=>'diff'}='Diff'
-          %br
       %h3 Results:
       %ol
         - $web.sorted_search_results.each do |(id,score)|
