@@ -5,18 +5,11 @@ require 'sinatra'
 require 'uuid'
 require 'yaml'
 require 'matrix'
+require 'ferret' #actually using jk-ferret gem
 include Math
+include Ferret
 
-#ruby 1.9 makes vector not suck by default -- we'll move to that eventually
 class Vector
-#   def length
-#     sqrt(self.to_a.inject(0){|s,v| s + v.to_f**2})
-#   end
-# 
-#   def /(n)
-#     self*(1.0/n)
-#   end
-  
   def unit
     self/self.r
   end
@@ -25,24 +18,31 @@ end
 
 class Thought
   attr_reader :title, :comment, :docs, :links, :iden, :times
-  def initialize(title, comment)#, docs)
+  attr_accessor :position
+  def initialize(index, position, title, comment)#, docs)
+    @index = index
+    @position = position
     @title = title
     @comment = comment
 #     @docs = docs
     @links = []
     @iden = $uuid.generate
-    @times = [Time.new]
+    @times = []
+    
+    update_times_and_index
   end
   
-  def update_times
+  def update_times_and_index
     @times << Time.new
+    @index.delete(@iden)
+    @index << {:id=>@iden, :title=>@title, :comment=>@comment, :update_time=>@times[-1].to_s}
   end
   
   def link(idens)
     idens.each do |iden| #also works with idens as a string containing just one iden?
       unless @links.include?(iden) or iden == @iden
 	@links << iden
-	update_times
+	update_times_and_index
       end
     end
   end
@@ -51,19 +51,19 @@ class Thought
     idens.each do |iden| #also works with idens as a string containing just one iden?
       if @links.include?(iden)
 	@links.delete(iden)
-	update_times
+	update_times_and_index
       end    
     end
   end
   
   def comment=(c)
     @comment = c
-    update_times
+    update_times_and_index
   end
   
   def title=(t)
     @title = t
-    update_times
+    update_times_and_index
   end
 end
 
@@ -71,10 +71,10 @@ class Web
   attr_reader :file, :thoughts
   def initialize(width, height, file = nil)
     if file==nil
+      @index = Index::Index.new() #TODO: make persistent
       @thoughts = []
       @recent = []
       @selected = []
-      @positions = []
       @center = nil
     else
       
@@ -83,13 +83,12 @@ class Web
     @height = height -5
   end
   
-  def position(iden)
-    @positions[@thoughts.find_index{|t| t.iden == iden}]
-  end
+#   def position(iden)
+#     @positions[@thoughts.find_index{|t| t.iden == iden}]
+#   end
   
-  def add_thought(thought)
-    @thoughts << thought
-    @positions << Vector[(@width-100)*(rand-0.5),(@height-100)*(rand-0.5)]
+  def add_thought(title,comment)
+    @thoughts << Thought.new(@index, Vector[(@width-100)*(rand-0.5),(@height-100)*(rand-0.5)], title, comment)
     update_positions
   end
   
@@ -119,7 +118,8 @@ class Web
       forces = []
       
       #loop over all verticies
-      @positions.each_with_index do |pos,i|
+      @thoughts.each_with_index do |th|
+	pos = th.position
 	x = pos[0]
 	y = pos[1]
 	
@@ -128,15 +128,16 @@ class Web
 	force = Vector[-sin(PI/2*x/w)/cos(PI/2*x/w)**2, -sin(PI/2*y/h)/cos(PI/2*y/h)**2]*potC
 	
 	#force due to springs
-	@thoughts[i].links.each do |link|
-	  pos2 = position(link)
+	th.links.each do |link|
+	  pos2 = lookup_thought(link).position
 	  r = pos2 - pos
 	  force += r.unit*k*(r.r - restLength)
 	end
 	
 	#force due to charges
-	@positions.each do |pos2|
-	  unless pos2 == pos #ignore itself
+	@thoughts.each do |th2|
+	  unless th == th2 #ignore itself
+	    pos2 = th2.position
 	    r = pos - pos2
 	    force += r.unit*chargeC/r.r**2
 	  end
@@ -144,21 +145,21 @@ class Web
 	
 	#TODO: TAKE THIS OUTSIDE OF LOOP
 	#force to center a thought -- like a spring with zero rest length pulling towards center
-	if @thoughts[i].iden == @center
-	  force += pos*(-1)*centeringC
+	if th.iden == @center
+	  force += -1*pos*centeringC
 	end
 
 	forces << force
       end
-      oldPos = @positions.dup
+      oldPos = @thoughts.collect{|th| th.position}
       oldVel = velocities.dup
       while true
 	#update velocities
 	velocities = oldVel.zip(forces).collect{|(v,f)| v*damping + f*timestep}
 	#update positions
-	@positions = oldPos.zip(velocities).collect{|(p,v)| p + v*timestep}
+	newPos = oldPos.zip(velocities).collect{|(p,v)| p + v*timestep}
 	#check to see if any are out of bounds
-	if @positions.find{|p| p[0].abs > w or p[1].abs > h} == nil
+	if newPos.find{|p| p[0].abs > w or p[1].abs > h} == nil
 	  break #exit loop if none are
 	else
 	  timestep /= 2.0 #if something's out of bounds, lower timestep and try again
@@ -178,7 +179,11 @@ class Web
 	timestep *=1.0625
       end
 print "KE: #{ke} timestep: #{timestep}\n"
-    end while ke > timestep*@positions.size/10.0
+
+      #store the new positions in the thoughts
+      @thoughts.zip(newPos).each{|(th,pos)| th.position = pos}
+
+    end while ke > timestep*@thoughts.size/10.0
   end
   
   def to_yaml
@@ -204,13 +209,13 @@ print "KE: #{ke} timestep: #{timestep}\n"
 	  </svg:defs>\n\n&
     #draw links between thoughts
     @thoughts.each do |th|
-      pos = position(th.iden)
-      th.links.each do |th2|
-	pos2 = position(th2)
+      pos = th.position
+      th.links.each do |th2id|
+	pos2 = lookup_thought(th2id).position
 	#color the edges according to the following
-	if @selected.include?(th.iden) and @selected.include?(th2)
+	if @selected.include?(th.iden) and @selected.include?(th2id)
 	  color = "red" #verticies at both ends selected
-	elsif @selected.include?(th.iden) or @selected.include?(th2)
+	elsif @selected.include?(th.iden) or @selected.include?(th2id)
 	  color = "orange" #vertex at one end selected
 	else
 	  color = "black" #neither vertex selected
@@ -219,7 +224,8 @@ print "KE: #{ke} timestep: #{timestep}\n"
       end
     end
     #draw thought bubbles
-    @thoughts.zip(@positions).each do |(t,p)|
+    @thoughts.each do |t|
+      p = t.position
       svg << %Q\
 	<svg:a xlink:href="/select/#{t.iden}">
       	  <svg:title>#{t.comment}</svg:title>
@@ -262,16 +268,24 @@ print "KE: #{ke} timestep: #{timestep}\n"
       @selected.delete(iden)
     end
   end
+
+  def delete_selected
+    @thoughts.each{|th| th.unlink(@selected)} #delete any links to the selected thoughts
+    @selected.each do |id|
+      @index.delete(id) #delete each selected thought from @index
+      @thoughts.delete_if{|th| th.iden == id} #then delete from @thoughts
+    end
+    deselect_all
+    update_positions
+  end
   
   def link_selected
-    selectedThoughts = @selected.collect{|iden| @thoughts.find{|th| th.iden == iden}} #get array of the corresponding thoughts
-    selectedThoughts.each{|th| th.link(@selected)}
+    @selected.each{|id| lookup_thought(id).link(@selected)}
     update_positions
   end
 
   def unlink_selected
-    selectedThoughts = @selected.collect{|iden| @thoughts.find{|th| th.iden == iden}} #get array of the corresponding thoughts
-    selectedThoughts.each{|th| th.unlink(@selected)}
+    @selected.each{|id| lookup_thought(id).unlink(@selected)}
     update_positions
   end  
   
@@ -329,6 +343,11 @@ get '/select/:iden' do
   redirect '/web'
 end
 
+get '/delete' do
+  $web.delete_selected
+  redirect '/web'
+end
+
 get '/link' do
   $web.link_selected
   redirect '/web'
@@ -347,7 +366,7 @@ end
 post '/new' do
   title = params[:title]
   comment = params[:comment]
-  $web.add_thought(Thought.new(title,comment))
+  $web.add_thought(title,comment)
   redirect '/web'
 end
 
