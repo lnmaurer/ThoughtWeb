@@ -1,4 +1,4 @@
-require 'svg/svg'
+#require 'svg/svg'
 require 'rubygems'
 require 'haml'
 require 'sinatra'
@@ -9,16 +9,16 @@ include Math
 
 #ruby 1.9 makes vector not suck by default -- we'll move to that eventually
 class Vector
-  def length
-    sqrt(self.to_a.inject(0){|s,v| s + v.to_f**2})
-  end
-
-  def /(n)
-    self*(1.0/n)
-  end
+#   def length
+#     sqrt(self.to_a.inject(0){|s,v| s + v.to_f**2})
+#   end
+# 
+#   def /(n)
+#     self*(1.0/n)
+#   end
   
   def unit
-    self/length
+    self/self.r
   end
 end
 
@@ -131,14 +131,14 @@ class Web
 	@thoughts[i].links.each do |link|
 	  pos2 = position(link)
 	  r = pos2 - pos
-	  force += r.unit*k*(r.length - restLength)
+	  force += r.unit*k*(r.r - restLength)
 	end
 	
 	#force due to charges
 	@positions.each do |pos2|
 	  unless pos2 == pos #ignore itself
 	    r = pos - pos2
-	    force += r.unit*chargeC/r.length**2
+	    force += r.unit*chargeC/r.r**2
 	  end
 	end
 	
@@ -167,7 +167,7 @@ class Web
       end 
       
       oldKE = ke
-      ke = velocities.inject(0){|s,v| s + m*v.length**2}
+      ke = velocities.inject(0){|s,v| s + m*v.r**2}
       
       if oldKE > ke
 	count += 1
