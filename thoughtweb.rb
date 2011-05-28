@@ -1,5 +1,9 @@
-#require 'svg/svg'
+#non-gem requirements:
 require 'matrix'
+require 'digest/md5'
+require 'fileutils'
+require 'tempfile'
+#gems requirements:
 require 'rubygems'
 require 'haml'
 require 'sinatra'
@@ -15,15 +19,54 @@ class Vector
   end
 end
 
+#TODO: MAKE REFERENCE A CLASS; FOR NOW JUST A STRING
+class Document
+  attr_reader :iden, :filename, :type, :reference, :hash
+  def initialize(tempfile, filename, type, reference="")
+    @iden = $uuid.generate
+    @filename = filename
+    @type = type
+    if reference == ""
+      @reference = filename
+    else
+      @reference = reference
+    end
+    @hash = Digest::MD5.file(tempfile).to_s
+    
+    FileUtils.mkdir('files/' + @iden)
+    FileUtils.cp(tempfile.path, path)
+  end
+  
+  def path
+    'files/' + @iden + '/' + @filename
+  end
+  
+  def open_file
+    File.open(path){|file| yeild(file)}
+  end
+  
+  def read
+    File.read(path)
+  end
+  
+  def text
+    read #TODO: MAKE WORK FOR NON-TEXT FILES
+  end
+  
+  def delete #it's a shame ruby doesn't have a destructor...
+    FileUtils.rm_r('files/' + @iden)
+  end
+end
+
 class Thought
-  attr_reader :title, :comment, :docs, :links, :iden, :times
+  attr_reader :title, :comment, :docs, :links, :iden, :times, :docs
   attr_accessor :position, :searchScore
   def initialize(web, position, title, comment)#, docs)
     @web = web
     @position = position
     @title = title
     @comment = comment
-#     @docs = docs
+    @docs = [] #for the moment, only add documents after the fact
     @links = []
     @iden = $uuid.generate
     @times = []
@@ -41,6 +84,19 @@ class Thought
     @web.index << {:id=>@iden, :title=>@title, :comment=>@comment, :update_time=>@times[-1].to_s}
     #signal that the search results need updating
     @web.searchNeedsUpdate = true
+  end
+  
+  def add_doc(doc)
+    @docs << doc
+  end
+  
+  def delete_doc(id)
+    @docs.find{|doc| doc.iden == id}.delete #delete the files
+    @docs.reject!{|doc| doc.iden == id} #remove the reference from the list
+  end
+  
+  def lookup_doc(id)
+    @docs.find{|doc| doc.iden == id}
   end
   
   def link(idens)
@@ -110,6 +166,7 @@ class Web
     @colorBySearch = false
     @width = width - 5
     @height = height - 5
+    FileUtils.mkdir('files')
   end
 
   def set_width_height(w,h)
@@ -404,9 +461,9 @@ end
 get '/size/:width/:height' do
   width = params[:width].to_i
   height = params[:height].to_i
-#   $web = Web.new(width,height)    
-  $web = Web.load('test.yml') #TODO: MAKE GENERAL
-  $web.set_width_height(width,height)
+  $web = Web.new(width,height)    
+#   $web = Web.load('test.yml') #TODO: MAKE GENERAL
+#   $web.set_width_height(width,height)
   redirect $redirect
 end
 
@@ -428,6 +485,10 @@ get '/edit/:iden' do
   iden = params[:iden]
   $redirect = '/edit/' + iden
   $thought = $web.lookup_thought(iden)
+  if $thought == nil #could hapen if you delete the thought while in editing mode
+    $redirect = '/web'
+    redirect '/web'
+  end
   haml :edit
 end
 
@@ -437,6 +498,24 @@ get '/view/:iden' do
   $redirect = '/view/' + iden
   $thought = $web.lookup_thought(iden)
   haml :view
+end
+
+get '/add_doc/:iden' do
+  content_type 'application/xml', :charset => 'utf-8'
+  iden = params[:iden]
+  $thought = $web.lookup_thought(iden)
+  haml :add_doc  
+end
+
+get '/delete_doc/:thought_iden/:doc_iden' do
+  $web.lookup_thought(params[:thought_iden]).delete_doc(params[:doc_iden])
+  redirect $redirect
+end
+
+get '/doc/:thought_iden/:doc_iden/:doc_filename' do
+  doc = $web.lookup_thought(params[:thought_iden]).lookup_doc(params[:doc_iden])
+  content_type doc.type
+  doc.read
 end
 
 get '/center/:iden' do
@@ -501,6 +580,21 @@ post '/search' do
   elsif searchType == 'diff'
     $web.difference_search(searchTerm)    
   end
+  redirect $redirect
+end
+
+post '/add_doc/:iden' do
+puts params[:file].to_s
+#TODO: REWRITE FOLLOWING until CLAUSE
+  unless params[:file] &&
+         (tmpfile = params[:file][:tempfile]) &&
+         (name = params[:file][:filename])
+    @error = "No file selected"
+    return haml(:upload)
+  end
+
+  doc = Document.new(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference])
+  $web.lookup_thought(params[:iden]).add_doc(doc)
   redirect $redirect
 end
 
@@ -571,6 +665,7 @@ __END__
       %p
         %a{:href=>'/web'}="New Thought"
         %a{:href=>"/select/#{$thought.iden}"}="Select"
+        %a{:href=>"/add_doc/#{$thought.iden}"}="Add Document"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
       %p{:style=>"text-align: center;"}
         %a{:href=>'/link'}="Link" 
@@ -597,10 +692,17 @@ __END__
         %br
         Text: 
         =$thought.comment
+        - if $thought.docs.size != 0
+          %ul
+            - $thought.docs.each do |doc|
+              %li
+                %a{:href=>"/doc/#{$thought.iden}/#{doc.iden}/#{doc.filename}"}=doc.reference
+                %a{:href=>"/delete_doc/#{$thought.iden}/#{doc.iden}"}='D'
       %p
         %a{:href=>'/web'}="New Thought"
         %a{:href=>"/edit/#{$thought.iden}"}="Edit Thought"
         %a{:href=>"/select/#{$thought.iden}"}="Select"
+        %a{:href=>"/add_doc/#{$thought.iden}"}="Add Document"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
       %p{:style=>"text-align: center;"}
         %a{:href=>'/link'}="Link" 
@@ -661,3 +763,32 @@ __END__
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/web'}="New Thought"
         %a{:href=>'/save'}="Save"
+
+@@ add_doc
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
+%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
+  %head
+    %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    %title="ThoughtWeb"
+  %body{:style=>"margin: 0px;"}
+    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
+      =$web.to_svg
+    %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
+      %h2="Add Document to #{$thought.title}"
+      %form{:action=>"/add_doc/#{$thought.iden}", :method=>'post', :enctype=>"multipart/form-data"} 
+        %p
+          %input{:type=>"file",:name=>"file"}
+          Reference:
+          %input{:name=>'reference', :size=>'40', :type=>'text'}
+          %input{:type=>"submit",:value=>"Upload"}
+      %p
+        %a{:href=>'/web'}="New Thought"
+        %a{:href=>"/edit/#{$thought.iden}"}="Edit Thought"
+        %a{:href=>"/view/#{$thought.iden}"}="View Thought"
+    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
+      %p{:style=>"text-align: center;"}
+        %a{:href=>'/link'}="Link" 
+        %a{:href=>'/unlink'}="Unlink" 
+        %a{:href=>'/delete'}="Delete" 
+        %a{:href=>'/deselect'}="Deselect" 
+        %a{:href=>'/search'}="Search"
