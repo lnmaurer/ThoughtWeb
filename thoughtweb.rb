@@ -10,6 +10,10 @@ require 'sinatra'
 require 'uuid'
 require 'yaml'
 require 'ferret' #actually using the 'jk-ferret' gem
+require 'mime/types'
+#other requirements:
+#the program 'pdftotext' from package 'poppler-utils
+
 include Math
 include Ferret
 
@@ -21,16 +25,21 @@ end
 
 #TODO: MAKE REFERENCE A CLASS; FOR NOW JUST A STRING
 class Document
-  attr_reader :iden, :filename, :type, :reference, :hash
-  def initialize(tempfile, filename, type, reference="")
+  attr_reader :iden, :filename, :type, :reference, :hash, :ocr
+  def initialize(tempfile, filename, type, reference, option = '')
     @iden = $uuid.generate
     @filename = filename
-    @type = type
-    if reference == ""
+    if option == 'txt' #this option forces the file to be interperted as plain text
+      @type = 'text/plain'
+    else
+      @type = type
+    end
+    if reference == ''
       @reference = filename
     else
       @reference = reference
     end
+    @ocr = (option == 'ocr') #if this is true, we'll do OCR later
     @hash = Digest::MD5.file(tempfile).to_s
     
     FileUtils.mkdir('files/' + @iden)
@@ -50,7 +59,20 @@ class Document
   end
   
   def text
-    read #TODO: MAKE WORK FOR NON-TEXT FILES
+    #TODO: INCLUDE MORE TYPES
+    if @type == 'text/plain' #TODO: GET mime/types GEM WORKING SO WE CAN TELL WHAT OTHER TYPES ARE TEXT
+      read
+    elsif @ocr #TODO: IMPLIMENT OCR USING TESSERACT (AND IMAGEMAGIK???)
+      #NOTE: SHOULD SAVE TEXT AFTER OCR SO DON'T HAVE TO DO EVERY TIME text IS CALLED (HAPPENS WHENEVER A THOUGHT IT UPDATED)
+      
+    elsif @type == 'application/pdf' #TODO: TRY pdf-reader GEM
+      Kernel.system("pdftotext #{path} ./temppdf.txt")
+      text = File.read('temppdf.txt')
+      FileUtils.rm('temppdf.txt')
+      return text
+    else #need to return something
+      ''
+    end
   end
   
   def delete #it's a shame ruby doesn't have a destructor...
@@ -80,19 +102,23 @@ class Thought
     #update the time
     @times << Time.new
     #update the index
+    #TODO: DO WE REALLY WANT ALL THE DOCS TOGETHER IN ONE STRING? WHAT ARE OPTIONS? AN ADDITIONAL INDEX OF DOCS FOR EACH THOUGHT? MAKE DOCS INDEPENDENT OF THOUGHTS AND JUST LINK TO THEM?
+    text = @docs.inject(''){|txt,doc| txt + doc.text} #throw all the docs together in one string
     @web.index.delete(@iden)
-    @web.index << {:id=>@iden, :title=>@title, :comment=>@comment, :update_time=>@times[-1].to_s}
+    @web.index << {:id=>@iden, :title=>@title, :comment=>@comment, :docs=>text, :update_time=>@times[-1].to_s}
     #signal that the search results need updating
     @web.searchNeedsUpdate = true
   end
   
   def add_doc(doc)
     @docs << doc
+    update_times_and_index
   end
   
   def delete_doc(id)
     @docs.find{|doc| doc.iden == id}.delete #delete the files
     @docs.reject!{|doc| doc.iden == id} #remove the reference from the list
+    update_times_and_index
   end
   
   def lookup_doc(id)
@@ -403,6 +429,9 @@ class Web
     end
   end
 
+  #idea is to first get scores from ferret (call the ferret score for the 'i'th document fs_i), then find the association score:
+  #assoc_score_i = fs_i + sum_over_other_thoughts(assoc_score_i*link_strenght_i,j)
+  #that boils down to the matrix problem in the following method
   def find_scores(st)
     simple_search(st)
     
@@ -417,21 +446,21 @@ class Web
       end
     end
     
-    simpleScores = Matrix.column_vector(@thoughts.collect{|th| th.searchScore})
-    assocScores = m.inverse * simpleScores
+    ferretScores = Matrix.column_vector(@thoughts.collect{|th| th.searchScore})
+    assocScores = m.inverse * ferretScores
     
     return simpleScores, assocScores
   end
   
   def association_search(st = nil)
-    simpleScores, assocScores = find_scores(st)
+    ferretScores, assocScores = find_scores(st)
     @thoughts.zip(assocScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores  
     @searchType = :assoc #need this at end because find_scores does a simple search
   end
   
   def difference_search(st = nil)
-    simpleScores, assocScores = find_scores(st)
-    diffScores = assocScores - simpleScores
+    ferretScores, assocScores = find_scores(st)
+    diffScores = assocScores - ferretScores
     @thoughts.zip(diffScores.to_a.flatten).each{|(th,sc)| th.searchScore = sc} #assign the new scores  
     @searchType = :diff #need this at end because find_scores does a simple search
   end
@@ -593,7 +622,7 @@ puts params[:file].to_s
     return haml(:upload)
   end
 
-  doc = Document.new(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference])
+  doc = Document.new(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference], params[:opt])
   $web.lookup_thought(params[:iden]).add_doc(doc)
   redirect $redirect
 end
@@ -663,7 +692,8 @@ __END__
           %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}=$thought.comment
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
-        %a{:href=>'/web'}="New Thought"
+        %a{:href=>'/web'}="New"
+        %a{:href=>"/view/#{$thought.iden}"}="View"
         %a{:href=>"/select/#{$thought.iden}"}="Select"
         %a{:href=>"/add_doc/#{$thought.iden}"}="Add Document"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
@@ -699,8 +729,8 @@ __END__
                 %a{:href=>"/doc/#{$thought.iden}/#{doc.iden}/#{doc.filename}"}=doc.reference
                 %a{:href=>"/delete_doc/#{$thought.iden}/#{doc.iden}"}='D'
       %p
-        %a{:href=>'/web'}="New Thought"
-        %a{:href=>"/edit/#{$thought.iden}"}="Edit Thought"
+        %a{:href=>'/web'}="New"
+        %a{:href=>"/edit/#{$thought.iden}"}="Edit"
         %a{:href=>"/select/#{$thought.iden}"}="Select"
         %a{:href=>"/add_doc/#{$thought.iden}"}="Add Document"
     %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
@@ -780,6 +810,14 @@ __END__
           %input{:type=>"file",:name=>"file"}
           Reference:
           %input{:name=>'reference', :size=>'40', :type=>'text'}
+          %br
+          Options:
+          %input{:type=>'radio', :name=>'opt', :value=>'none', :id=>'none', :checked=>'checked'}
+          %label{:for=>'none'}='None'
+          %input{:type=>'radio', :name=>'opt', :value=>'txt', :id=>'txt'}
+          %label{:for=>'txt'}='Force UTF-8'
+          %input{:type=>'radio', :name=>'opt', :value=>'ocr', :id=>'ocr'}
+          %label{:for=>'ocr'}='OCR'
           %input{:type=>"submit",:value=>"Upload"}
       %p
         %a{:href=>'/web'}="New Thought"
