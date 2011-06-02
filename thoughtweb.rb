@@ -745,22 +745,13 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 ThoughtWeb
       %p
         %a{:href=>'/new_thought'}="New Thought"
         %a{:href=>'/new_document'}="New Document"
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 @@ edit_thought
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -769,8 +760,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit Thought
       %form{:action=>'/save_thought_edit', :method=>'post'}
@@ -784,15 +774,7 @@ __END__
         %a{:href=>'/web'}="New"
         %a{:href=>"/view/#{$vertex.iden}"}="View"
         %a{:href=>"/select/#{$vertex.iden}"}="Select"
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 @@ edit_document
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -801,8 +783,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit Document
       %form{:action=>'/save_document_edit', :method=>'post'}
@@ -814,15 +795,7 @@ __END__
         %a{:href=>'/web'}="New"
         %a{:href=>"/view/#{$vertex.iden}"}="View"
         %a{:href=>"/select/#{$vertex.iden}"}="Select"
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 @@ view_thought
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -831,8 +804,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 View Thought
       %p
@@ -845,15 +817,7 @@ __END__
         %a{:href=>'/web'}="New"
         %a{:href=>"/edit/#{$vertex.iden}"}="Edit"
         %a{:href=>"/select/#{$vertex.iden}"}="Select"
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 @@ view_document
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -862,8 +826,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 View Document
       %p
@@ -875,15 +838,7 @@ __END__
         %a{:href=>'/web'}="New"
         %a{:href=>"/edit/#{$vertex.iden}"}="Edit"
         %a{:href=>"/select/#{$vertex.iden}"}="Select"
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 @@ search
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -892,8 +847,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Search
       %form{:action=>'/search', :method=>'post'} 
@@ -928,15 +882,7 @@ __END__
             %a{:href=>"/edit/#{id}"}="E"
             %a{:href=>"/center/#{id}"}="C" 
             %a{:href=>"/select/#{id}"}="S" 
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/web'}="New"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 
 @@ new_thought
@@ -946,8 +892,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 New
       %form{:action=>'/new_thought', :method=>'post'} 
@@ -957,15 +902,7 @@ __END__
           Text:
           %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}
           %input{:type=>'submit', :value=>'Create Thought'}   
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
 
 @@ new_document
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -974,8 +911,7 @@ __END__
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
-    %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-      =$web.to_svg
+    =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2="New Document"
       %form{:action=>"/new_document", :method=>'post', :enctype=>"multipart/form-data"} 
@@ -994,12 +930,20 @@ __END__
           %input{:type=>"submit",:value=>"Upload"}
       %p
         %a{:href=>'/web'}="New"
-    %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
-      %p{:style=>"text-align: center;"}
-        %a{:href=>'/link'}="Link" 
-        %a{:href=>'/unlink'}="Unlink" 
-        %a{:href=>'/delete'}="Delete" 
-        %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/search'}="Search"
-        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
-        %a{:href=>'/save'}="Save"
+    =haml(:control_div)
+
+@@ svg_div
+%div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
+  =$web.to_svg
+    
+@@ control_div
+%div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
+  %p{:style=>"text-align: center;"}
+    %a{:href=>'/link'}='Link' 
+    %a{:href=>'/unlink'}='Unlink' 
+    %a{:href=>'/delete'}='Delete' 
+    %a{:href=>'/deselect'}='Deselect'
+    %a{:href=>'/web'}='New'
+    %a{:href=>'/search'}='Search'
+    %a{:href=>'/toggle_search_coloring'}='(Toggle Coloring)'
+    %a{:href=>'/save'}='Save'
