@@ -44,9 +44,8 @@ class Vertex
     #update the time
     @times << Time.new
     #update the index
-    #TODO: DO WE REALLY WANT ALL THE DOCS TOGETHER IN ONE STRING? WHAT ARE OPTIONS? AN ADDITIONAL INDEX OF DOCS FOR EACH THOUGHT? MAKE DOCS INDEPENDENT OF THOUGHTS AND JUST LINK TO THEM?
     @web.index.delete(@iden)
-    @web.index << {:id=>@iden, :title=>name, :content=>content, :update_time=>@times[-1].to_s}
+    @web.index << {:id=>@iden, :title=>name, :content=>content, :update_time=>@times[-1].to_s, :type=>@type.to_s}
     #signal that the search results need updating
     @web.searchNeedsUpdate = true
   end
@@ -84,8 +83,10 @@ end
 #TODO: COMPLETE THIS
 #possible types: URL, to external ThoughtWeb
 class ExternalLink < Vertex
-  
-  
+  def initialize(web, position, name, link)#,type)
+    
+    super(web, position, :externalLink)
+  end
 end
 
 #TODO: MAKE REFERENCE A CLASS; FOR NOW JUST A STRING
@@ -111,7 +112,7 @@ class TWDocument < Vertex
     FileUtils.mkdir('files/' + @iden)
     FileUtils.cp(tempfile.path, path)
     
-    super(web, position, :doc) #needs to come after FileUtils stuff so we can read from the doc
+    super(web, position, :document) #needs to come after FileUtils stuff so we can read from the doc
   end
   
   def path
@@ -153,7 +154,7 @@ class TWDocument < Vertex
 end
 
 class Thought < Vertex
-  attr_reader :title, :comment, :docs, :links, :iden, :times, :docs
+  attr_reader :title, :comment, :links, :iden, :times
   attr_accessor :position, :searchScore
   def initialize(web, position, title, comment)
     @title = title
@@ -208,6 +209,7 @@ class Web
     @searchType = :simple
     @searchTerm = ""
     @searchNeedsUpdate = false
+    @maxSearchScore = 0.0
     @colorBySearch = false
     @width = width - 5
     @height = height - 5
@@ -352,11 +354,31 @@ class Web
     #draw vertex bubbles
     @vertices.each do |ver|
       p = ver.position
+      strokeColor = case ver.type
+      when :thought
+	'red'
+      when :document
+	'blue'
+      when :externalLink
+	'green'
+      end
+      strokeWidth = @selected.include?(ver.iden) ? '5' : '1'
+      if @colorBySearch and ver.searchScore != 0.0
+	percent = (ver.searchScore/@maxSearchScore*100.0).round
+	fillColor = "rgb(0%,#{percent}%,#{percent}%)"
+      else
+	fillColor = 'white'
+      end
+      if ver.content.size > 80
+	content = ver.content[0,80] + '...'
+      else
+	content = ver.content
+      end
       svg << %Q\
 	<svg:a xlink:href="/select/#{ver.iden}">
-      	  <svg:title>#{ver.content[0,80]}</svg:title>
+      	  <svg:title>#{content}</svg:title>
 	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
-	    <svg:circle r="50" style="fill: #{@selected.include?(ver.iden) ? 'magenta' : 'white'}; stroke: red; stroke-width: 1" />
+	    <svg:circle r="50" style="fill: #{fillColor}; stroke: #{strokeColor}; stroke-width: #{strokeWidth}" />
 	    <svg:text font-family="Verdana" font-size="20" fill="black" >
 	      <svg:textPath xlink:href="#cpath">
 		#{ver.name}
@@ -446,6 +468,9 @@ class Web
     end
   end
   
+  def update_maxSearchScore
+    @maxSearchScore = @vertices.collect{|ver| ver.searchScore}.sort[-1]
+  end
 #TODO: CHECK TO SEE IF OLD SEARCH RESULTS ARE STILL GOOD BEFORE SEARCHING?  
   
   def simple_search(st = nil)
@@ -457,6 +482,7 @@ class Web
     @index.search_each(@searchTerm) do |id, score| #this id isn't the UUID asigned to the vertex, but the location in @index
       lookup_vertex(@index[id][:id]).searchScore = score
     end
+    update_maxSearchScore #TODO: BETTER PLACE TO PUT THIS? WILL BE CALLED TWICE FOR NON-SIMPLE SEARCHES
   end
 
   #idea is to first get scores from ferret (call the ferret score for the 'i'th document fs_i), then find the association score:
@@ -485,13 +511,15 @@ class Web
   def association_search(st = nil)
     ferretScores, assocScores = find_scores(st)
     @vertices.zip(assocScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores  
+    update_maxSearchScore
     @searchType = :assoc #need this at end because find_scores does a simple search
   end
   
   def difference_search(st = nil)
     ferretScores, assocScores = find_scores(st)
     diffScores = assocScores - ferretScores
-    @vertices.zip(diffScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores  
+    @vertices.zip(diffScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores 
+    update_maxSearchScore
     @searchType = :diff #need this at end because find_scores does a simple search
   end
  
@@ -577,7 +605,7 @@ get '/view/:iden' do
     $redirect = '/web'
   elsif $vertex.type == :thought
     $redirect = '/view_thought/' + iden
-  elsif $vertex.type == :doc
+  elsif $vertex.type == :document
     $redirect = '/view_document/' + iden
   end
   redirect $redirect  end
@@ -589,7 +617,7 @@ get '/edit/:iden' do
     $redirect = '/web'
   elsif $vertex.type == :thought
     $redirect = '/edit_thought/' + iden
-  elsif $vertex.type == :doc
+  elsif $vertex.type == :document
     $redirect = '/edit_document/' + iden
   end
   redirect $redirect  
@@ -635,6 +663,11 @@ end
 
 get '/save' do
   $web.save('test.yml') #TODO: MAKE GENERAL
+  redirect $redirect
+end
+
+get '/toggle_search_coloring' do
+  $web.colorBySearch = (not $web.colorBySearch)
   redirect $redirect
 end
 
@@ -726,6 +759,7 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 @@ edit_thought
@@ -757,6 +791,7 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 @@ edit_document
@@ -786,6 +821,7 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 @@ view_thought
@@ -816,6 +852,7 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 @@ view_document
@@ -845,6 +882,7 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 @@ search
@@ -896,7 +934,8 @@ __END__
         %a{:href=>'/unlink'}="Unlink" 
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
-        %a{:href=>'/web'}="New Thought"
+        %a{:href=>'/web'}="New"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 
@@ -925,6 +964,7 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
         %a{:href=>'/save'}="Save"
 
 @@ new_document
@@ -961,3 +1001,5 @@ __END__
         %a{:href=>'/delete'}="Delete" 
         %a{:href=>'/deselect'}="Deselect" 
         %a{:href=>'/search'}="Search"
+        %a{:href=>'/toggle_search_coloring'}="(Color Results)"
+        %a{:href=>'/save'}="Save"
