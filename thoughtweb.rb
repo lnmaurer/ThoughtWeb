@@ -109,14 +109,15 @@ class TWDocument < Vertex
     @hash = Digest::MD5.file(tempfile).to_s
 
     @iden = $uuid.generate
-    FileUtils.mkdir('files/' + @iden)
+    @web = web
+    FileUtils.mkdir(@web.iden + '/files/' + @iden)
     FileUtils.cp(tempfile.path, path)
     
     super(web, position, :document) #needs to come after FileUtils stuff so we can read from the doc
   end
   
   def path
-    'files/' + @iden + '/' + @filename
+    @web.iden + '/files/' + @iden + '/' + @filename
   end
   
   def open_file
@@ -139,9 +140,9 @@ class TWDocument < Vertex
       #NOTE: SHOULD SAVE TEXT AFTER OCR SO DON'T HAVE TO DO EVERY TIME text IS CALLED (HAPPENS WHENEVER A THOUGHT IT UPDATED)
       
     elsif @mimeType == 'application/pdf' #TODO: TRY pdf-reader GEM
-      Kernel.system("pdftotext #{path} ./temppdf.txt")
-      text = File.read('temppdf.txt')
-      FileUtils.rm('temppdf.txt')
+      Kernel.system("pdftotext #{path} #{@web.iden}/temppdf.txt")
+      text = File.read(@web.iden + '/temppdf.txt')
+      FileUtils.rm(@web.iden + '/temppdf.txt')
       return text
     else #need to return something
       ''
@@ -186,22 +187,22 @@ class Thought < Vertex
 end
 
 class Web
-  attr_reader :vertices, :searchTerm, :searchType
+  attr_reader :vertices, :searchTerm, :searchType, :iden, :title
   attr_accessor :index, :searchNeedsUpdate, :colorBySearch
   
-  def self.load(file)
-    web = YAML.load(File.open(file))
-    web.index = Index::Index.new(:path=> 'test.ferret') #TODO: MAKE GENERAL
+  def self.load(folder)
+    web = YAML.load(File.open(folder + '/web.yaml'))
+    web.index = Index::Index.new(:path=> folder + '/index.ferret')
     return web
   end
   
-  def save(file)
-    File.open(file, "w") {|f| f.write(self.to_yaml) }
+  def save
+    File.open(@iden + '/web.yaml', "w") {|f| f.write(self.to_yaml) }
     @index.flush
   end
   
-  def initialize(width, height)
-    @index = Index::Index.new(:path=> 'test.ferret') #TODO: MAKE GENERAL
+  def initialize(title, width, height)
+    @title = title
     @vertices = []
 #     @recent = []
     @selected = []
@@ -213,9 +214,13 @@ class Web
     @colorBySearch = false
     @width = width - 5
     @height = height - 5
-    FileUtils.mkdir('files')
+    @iden = $uuid.generate
+    FileUtils.mkdir(@iden)
+    @index = Index::Index.new(:path=> @iden + '/index.ferret')
+    FileUtils.mkdir(@iden + '/files')
   end
 
+  #TODO: REMOVE WIDTH AND HEIGHT FROM WEB??? MAKE A SEPERATE VIEW CLASS???
   def set_width_height(w,h)
     @width = w - 5
     @height = h - 5
@@ -375,7 +380,7 @@ class Web
 	content = ver.content
       end
       svg << %Q\
-	<svg:a xlink:href="/select/#{ver.iden}">
+	<svg:a xlink:href="/select/#{@iden}/#{ver.iden}">
       	  <svg:title>#{content}</svg:title>
 	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
 	    <svg:circle r="50" style="fill: #{fillColor}; stroke: #{strokeColor}; stroke-width: #{strokeWidth}" />
@@ -388,13 +393,13 @@ class Web
 	</svg:a>	
 	<svg:g transform="translate(#{p[0]},#{p[1]}) scale(1,-1)">
 	    <svg:text x="-30" y="0" font-family="Verdana" font-size="20" fill="black" >
-	      <svg:a xlink:href="/view/#{ver.iden}">
+	      <svg:a xlink:href="/view/#{@iden}/#{ver.iden}">
 		V
 	      </svg:a>
-	      <svg:a xlink:href="/edit/#{ver.iden}">
+	      <svg:a xlink:href="/edit/#{@iden}/#{ver.iden}">
 		E
 	      </svg:a>
-	      <svg:a xlink:href="/center/#{ver.iden}">
+	      <svg:a xlink:href="/center/#{@iden}/#{ver.iden}">
 		C
 	      </svg:a>
 	    </svg:text>
@@ -424,11 +429,13 @@ class Web
   def add_thought(title,comment)
     @vertices << Thought.new(self, random_position, title, comment)
     update_positions
+    save
   end  
   
   def add_document(tempfile, filename, mimeType, reference, option)
     @vertices << TWDocument.new(self, random_position, tempfile, filename, mimeType, reference, option)
-    update_positions    
+    update_positions
+    save
   end
   
   def delete_selected
@@ -442,16 +449,19 @@ class Web
     deselect_all #otherwise the deleted vertices will still be in @selected, causing problems later
     @searchNeedsUpdate = true
     update_positions
+    save
   end
   
   def link_selected
     @selected.each{|id| lookup_vertex(id).link(@selected)}
     update_positions
+    save
   end
 
   def unlink_selected
     @selected.each{|id| lookup_vertex(id).unlink(@selected)}
     update_positions
+    save
   end  
   
   def deselect_all
@@ -483,6 +493,7 @@ class Web
       lookup_vertex(@index[id][:id]).searchScore = score
     end
     update_maxSearchScore #TODO: BETTER PLACE TO PUT THIS? WILL BE CALLED TWICE FOR NON-SIMPLE SEARCHES
+    save
   end
 
   #idea is to first get scores from ferret (call the ferret score for the 'i'th document fs_i), then find the association score:
@@ -505,13 +516,14 @@ class Web
     ferretScores = Matrix.column_vector(@vertices.collect{|ver| ver.searchScore})
     assocScores = m.inverse * ferretScores
     
-    return simpleScores, assocScores
+    return ferretScores, assocScores
   end
   
   def association_search(st = nil)
     ferretScores, assocScores = find_scores(st)
     @vertices.zip(assocScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores  
     update_maxSearchScore
+    save
     @searchType = :assoc #need this at end because find_scores does a simple search
   end
   
@@ -520,10 +532,11 @@ class Web
     diffScores = assocScores - ferretScores
     @vertices.zip(diffScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores 
     update_maxSearchScore
+    save
     @searchType = :diff #need this at end because find_scores does a simple search
   end
  
-  #returns an array of [id, score] pairs sorted by score from highest to lowest. If the score is zero then the pair isn't returned
+  #returns an array of [id, scwebore] pairs sorted by score from highest to lowest. If the score is zero then the pair isn't returned
   def sorted_search_results
     if @searchNeedsUpdate
       repeat_search
@@ -537,148 +550,197 @@ end
 
 #globals
 $uuid = UUID.new
-$redirect = '/web'
-$vertex = nil
+$redirect = '/'
+$vertex = nil #TODO: PUT VERTEX IN WEB???
+$webs = {}
 
 get '/' do
   content_type 'application/xml', :charset => 'utf-8'
-  @center = nil
+  $redirect = '/'
+  
+  #get screen size if it's unknown
+  redirect '/sizer' if $width == nil or $height == nil
+  
+  #load past webs if they exist and haven't been loaded
+  if $webs.empty? and File.exists?('webs.yaml')
+    YAML.load(File.open('webs.yaml')).each do |id|
+      $webs.merge!({id => Web.load(id)})
+    end
+  end
+  
+  haml :start
+end
+
+get '/sizer' do
+  content_type 'application/xml', :charset => 'utf-8'
   haml :sizer
 end
 
 get '/size/:width/:height' do
-  width = params[:width].to_i
-  height = params[:height].to_i
-  $web = Web.new(width,height)    
+  $width = params[:width].to_i
+  $height = params[:height].to_i
+#   $web = Web.new(width,height)    
 #   $web = Web.load('test.yml') #TODO: MAKE GENERAL
 #   $web.set_width_height(width,height)
   redirect $redirect
 end
 
-get '/web' do
+get '/web/:web_iden' do
   content_type 'application/xml', :charset => 'utf-8'
-  $redirect = '/web'
-  redirect '/' if $web == nil #in case you visit /web before sizing
+  @webIden = params[:web_iden]
+  $redirect = '/web/' + @webIden
+#   redirect '/' if $webs[@webIden] == nil #web doesn't exist
   haml :web
 end
 
-get '/search' do
+get '/search/:web_iden' do
   content_type 'application/xml', :charset => 'utf-8'
-  $redirect = '/search'
+  @webIden = params[:web_iden]
+  $redirect = '/search/' + @webIden
   haml :search
 end
 
-get '/new_document' do
+get '/new_document/:web_iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @webIden = params[:web_iden]
   haml :new_document  
 end
 
-get '/new_thought' do
+get '/new_thought/:web_iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @webIden = params[:web_iden]
   haml :new_thought  
 end
 
-get '/view_thought/:iden' do
+get '/view_thought/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @webIden = params[:web_iden]
   haml :view_thought
 end
 
-get '/view_document/:iden' do
+get '/view_document/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @webIden = params[:web_iden]
   haml :view_document
 end
 
-get '/edit_thought/:iden' do
+get '/edit_thought/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @webIden = params[:web_iden]
   haml :edit_thought
 end
 
-get '/edit_document/:iden' do
+get '/edit_document/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @webIden = params[:web_iden]
   haml :edit_document
 end
 
-get '/view/:iden' do
+get '/view/:web_iden/:iden' do
   iden = params[:iden]
-  $vertex = $web.lookup_vertex(iden)
+  @webIden = params[:web_iden]
+  $vertex = $webs[@webIden].lookup_vertex(iden)
   if $vertex == nil #could hapen if you delete the vertex while in viewing mode
-    $redirect = '/web'
+    $redirect = '/web/' + @webIden
   elsif $vertex.type == :thought
-    $redirect = '/view_thought/' + iden
+    $redirect = '/view_thought/' + @webIden + '/' + iden
   elsif $vertex.type == :document
-    $redirect = '/view_document/' + iden
+    $redirect = '/view_document/' + @webIden + '/' + iden
   end
   redirect $redirect  end
 
-get '/edit/:iden' do
+get '/edit/:web_iden/:iden' do
   iden = params[:iden]
-  $vertex = $web.lookup_vertex(iden)
+  @webIden = params[:web_iden]
+  $vertex = $webs[@webIden].lookup_vertex(iden)
   if $vertex == nil #could hapen if you delete the vertex while in editing mode
-    $redirect = '/web'
+    $redirect = '/web/' + @webIden
   elsif $vertex.type == :thought
-    $redirect = '/edit_thought/' + iden
+    $redirect = '/edit_thought/' + @webIden + '/' + iden
   elsif $vertex.type == :document
-    $redirect = '/edit_document/' + iden
+    $redirect = '/edit_document/' + @webIden + '/' + iden
   end
   redirect $redirect  
 end
 
-get '/doc/:iden/:filename' do
-  doc = $web.lookup_vertex(params[:iden])
+get '/doc/:web_iden/:iden/:filename' do
+  iden = params[:iden]
+  @webIden = params[:web_iden]
+  doc = $webs[@webIden].lookup_vertex(iden)
   content_type doc.type
   doc.read
 end
 
-get '/center/:iden' do
+get '/center/:web_iden/:iden' do
+  @webIden = params[:web_iden]
   iden = params[:iden]
-  $web.toggle_center(iden)
+  $webs[@webIden].toggle_center(iden)
   redirect $redirect
 end
 
-get '/select/:iden' do
+get '/select/:web_iden/:iden' do
   iden = params[:iden]
-  $web.toggle_select(iden)
+  @webIden = params[:web_iden]
+  $webs[@webIden].toggle_select(iden)
   redirect $redirect
 end
 
-get '/delete' do
-  $web.delete_selected
+get '/delete/:web_iden' do
+  @webIden = params[:web_iden]
+  $webs[@webIden].delete_selected
   redirect $redirect
 end
 
-get '/link' do
-  $web.link_selected
+get '/link/:web_iden' do
+  @webIden = params[:web_iden]
+  $webs[@webIden].link_selected
   redirect $redirect
 end
 
-get '/unlink' do
-  $web.unlink_selected
+get '/unlink/:web_iden' do
+  @webIden = params[:web_iden]
+  $webs[@webIden].unlink_selected
   redirect $redirect
 end
 
-get '/deselect' do
-  $web.deselect_all
+get '/deselect/:web_iden' do
+  @webIden = params[:web_iden]
+  $webs[@webIden].deselect_all
   redirect $redirect
 end
 
-get '/save' do
-  $web.save('test.yml') #TODO: MAKE GENERAL
+get '/save/:web_iden' do
+  @webIden = params[:web_iden]
+  $webs[@webIden].save
   redirect $redirect
 end
 
-get '/toggle_search_coloring' do
-  $web.colorBySearch = (not $web.colorBySearch)
+get '/toggle_search_coloring/:web_iden' do
+  @webIden = params[:web_iden]
+  web = $webs[@webIden]
+  web.colorBySearch = (not web.colorBySearch)
   redirect $redirect
 end
 
-post '/new_thought' do
+post '/new_web' do
+  title = params[:title]
+  newWeb = Web.new(title, $width, $height)
+  newWeb.save #to make sure yaml file gets created
+  $webs.merge!({newWeb.iden => newWeb})
+  File.open('webs.yaml', "w") {|f| f.write($webs.keys.to_yaml)} #save updated list of webs
+  $redirect = 'web/' + newWeb.iden
+  redirect $redirect
+end
+
+post '/new_thought/:web_iden' do
+  @webIden = params[:web_iden]
   title = params[:title]
   comment = params[:comment]
-  $web.add_thought(title,comment)
+  $webs[@webIden].add_thought(title,comment)
   redirect $redirect
 end
 
-post '/new_document' do
+post '/new_document/:web_iden' do
 puts params[:file].to_s
 #TODO: REWRITE FOLLOWING until CLAUSE
   unless params[:file] &&
@@ -688,33 +750,38 @@ puts params[:file].to_s
     return haml(:upload)
   end
 
-  $web.add_document(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference], params[:opt])
+  @webIden = params[:web_iden]
+  $webs[@webIden].add_document(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference], params[:opt])
   redirect $redirect
 end
 
-post '/save_thought_edit' do
+post '/save_thought_edit/:web_iden' do
   #$vertex was already set to the thought we want in get '/edit/:iden'
+  @webIden = params[:web_iden]
   $vertex.title = params[:title]
   $vertex.comment = params[:comment]
   redirect $redirect
 end
 
-post '/save_document_edit' do
+post '/save_document_edit/:web_iden' do
   #$vertex was already set to the document we want in get '/edit/:iden'
+  @webIden = params[:web_iden]
   $vertex.reference = params[:reference] #TODO: MAKE WORK WITH NON STRING REFERENCES
   redirect $redirect
 end
 
-post '/search' do
+post '/search/:web_iden' do
+  @webIden = params[:web_iden]
+  web = $webs[@webIden]
   searchTerm = params[:searchterm]
   searchType = params[:searchtype]
   #TODO: REPALCE WITH SWITCH?
   if searchType == 'simple'
-    $web.simple_search(searchTerm)
+    web.simple_search(searchTerm)
   elsif searchType == 'assoc'
-    $web.association_search(searchTerm)
+    web.association_search(searchTerm)
   elsif searchType == 'diff'
-    $web.difference_search(searchTerm)    
+    web.difference_search(searchTerm)    
   end
   redirect $redirect
 end
@@ -737,7 +804,26 @@ __END__
     %title
   %body
 
-
+@@ start
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
+%html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
+  %head
+    %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    %title="ThoughtWeb"
+  %body{:style=>"margin: 0px;"}
+    - unless $webs.empty?
+      %h1 Existant Webs
+      %ul
+        - $webs.each_value do |web|
+          %li
+            %a{:href=>"/web/#{web.iden}"}=web.title
+    %h1 New Web
+    %form{:action=>'/new_web', :method=>'post'}
+      %p
+        Title:
+        %input{:name=>'title', :size=>'40', :type=>'text'}
+        %input{:type=>'submit', :value=>'Create'}
+  
 @@ web
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
 %html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
@@ -749,8 +835,8 @@ __END__
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 ThoughtWeb
       %p
-        %a{:href=>'/new_thought'}="New Thought"
-        %a{:href=>'/new_document'}="New Document"
+        %a{:href=>'/new_thought/' + @webIden}="New Thought"
+        %a{:href=>'/new_document/' + @webIden}="New Document"
     =haml(:control_div)
 
 @@ edit_thought
@@ -763,7 +849,7 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit Thought
-      %form{:action=>'/save_thought_edit', :method=>'post'}
+      %form{:action=>'/save_thought_edit/' + @webIden, :method=>'post'}
         %p
           Title:
           %input{:name=>'title', :size=>'40', :type=>'text', :value=>$vertex.title}
@@ -771,9 +857,9 @@ __END__
           %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}=$vertex.comment
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
-        %a{:href=>'/web'}="New"
-        %a{:href=>"/view/#{$vertex.iden}"}="View"
-        %a{:href=>"/select/#{$vertex.iden}"}="Select"
+        %a{:href=>'/web/' + @webIden}="New"
+        %a{:href=>"/view/#{@webIden}/#{$vertex.iden}"}="View"
+        %a{:href=>"/select/#{@webIden}/#{$vertex.iden}"}="Select"
     =haml(:control_div)
 
 @@ edit_document
@@ -786,15 +872,15 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit Document
-      %form{:action=>'/save_document_edit', :method=>'post'}
+      %form{:action=>'/save_document_edit/' + @webIden, :method=>'post'}
         %p
           Reference:
           %input{:name=>'reference', :size=>'40', :type=>'text', :value=>$vertex.reference}
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
-        %a{:href=>'/web'}="New"
-        %a{:href=>"/view/#{$vertex.iden}"}="View"
-        %a{:href=>"/select/#{$vertex.iden}"}="Select"
+        %a{:href=>'/web/' + @webIden}="New"
+        %a{:href=>"/view/#{@webIden}/#{$vertex.iden}"}="View"
+        %a{:href=>"/select/#@webIden{@webIden}/#{$vertex.iden}"}="Select"
     =haml(:control_div)
 
 @@ view_thought
@@ -814,9 +900,9 @@ __END__
         Text: 
         =$vertex.comment
       %p
-        %a{:href=>'/web'}="New"
-        %a{:href=>"/edit/#{$vertex.iden}"}="Edit"
-        %a{:href=>"/select/#{$vertex.iden}"}="Select"
+        %a{:href=>'/web/' + @webIden}="New"
+        %a{:href=>"/edit/#{@webIden}/#{$vertex.iden}"}="Edit"
+        %a{:href=>"/select/#{@webIden}/#{$vertex.iden}"}="Select"
     =haml(:control_div)
 
 @@ view_document
@@ -835,9 +921,9 @@ __END__
         %br
         %a{:href=>"/doc/#{$vertex.iden}/#{$vertex.filename}"}="Download #{$vertex.filename}"
       %p
-        %a{:href=>'/web'}="New"
-        %a{:href=>"/edit/#{$vertex.iden}"}="Edit"
-        %a{:href=>"/select/#{$vertex.iden}"}="Select"
+        %a{:href=>'/web/' + @webIden}="New"
+        %a{:href=>"/edit/#{@webIden}/#{$vertex.iden}"}="Edit"
+        %a{:href=>"/select/#{@webIden}/#{$vertex.iden}"}="Select"
     =haml(:control_div)
 
 @@ search
@@ -850,38 +936,38 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Search
-      %form{:action=>'/search', :method=>'post'} 
+      %form{:action=>'/search/' + @webIden, :method=>'post'} 
         %p
           Search: 
-          %input{:name=>'searchterm', :size=>'40', :type=>'text', :value=>$web.searchTerm}
+          %input{:name=>'searchterm', :size=>'40', :type=>'text', :value=>$webs[@webIden].searchTerm}
           %input{:type=>'submit', :value=>'Search'}
           %br
-          - if $web.searchType == :simple
+          - if $webs[@webIden].searchType == :simple
             %input{:type=>'radio', :name=>'searchtype', :value=>'simple', :id=>'simple', :checked=>'checked'}
           - else
             %input{:type=>'radio', :name=>'searchtype', :value=>'simple', :id=>'simple'}
           %label{:for=>'simple'}='Simple'
-          - if $web.searchType == :assoc
+          - if $webs[@webIden].searchType == :assoc
             %input{:type=>'radio', :name=>'searchtype', :value=>'assoc', :id=>'assoc', :checked=>'checked'}
           - else
             %input{:type=>'radio', :name=>'searchtype', :value=>'assoc', :id=>'assoc'}
           %label{:for=>'assoc'}='Assoc'
-          - if $web.searchType == :diff
+          - if $webs[@webIden].searchType == :diff
             %input{:type=>'radio', :name=>'searchtype', :value=>'diff', :id=>'diff', :checked=>'checked'}
           - else
             %input{:type=>'radio', :name=>'searchtype', :value=>'diff', :id=>'diff'}
           %label{:for=>'diff'}='Diff'
       %h3 Results:
       %ol
-        - $web.sorted_search_results.each do |(id,score)|
+        - $webs[@webIden].sorted_search_results.each do |(id,score)|
           %li
-            %strong=$web.lookup_vertex(id).name
+            %strong=$webs[@webIden].lookup_vertex(id).name
             with score
             =score
-            %a{:href=>"/view/#{id}"}="V"
-            %a{:href=>"/edit/#{id}"}="E"
-            %a{:href=>"/center/#{id}"}="C" 
-            %a{:href=>"/select/#{id}"}="S" 
+            %a{:href=>"/view/#{@webIden}/#{id}"}="V"
+            %a{:href=>"/edit/#{@webIden}/#{id}"}="E"
+            %a{:href=>"/center/#{@webIden}/#{id}"}="C" 
+            %a{:href=>"/select/#{@webIden}/#{id}"}="S" 
     =haml(:control_div)
 
 
@@ -895,7 +981,7 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 New
-      %form{:action=>'/new_thought', :method=>'post'} 
+      %form{:action=>'/new_thought/' + @webIden, :method=>'post'} 
         %p
           Title:
           %input{:name=>'title', :size=>'40', :type=>'text'} 
@@ -914,7 +1000,7 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2="New Document"
-      %form{:action=>"/new_document", :method=>'post', :enctype=>"multipart/form-data"} 
+      %form{:action=>'/new_document/' + @webIden, :method=>'post', :enctype=>"multipart/form-data"} 
         %p
           %input{:type=>"file",:name=>"file"}
           Reference:
@@ -929,21 +1015,21 @@ __END__
           %label{:for=>'ocr'}='OCR'
           %input{:type=>"submit",:value=>"Upload"}
       %p
-        %a{:href=>'/web'}="New"
+        %a{:href=>'/web/' + @webIden}="New"
     =haml(:control_div)
 
 @@ svg_div
 %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
-  =$web.to_svg
+  =$webs[@webIden].to_svg
     
 @@ control_div
 %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"} 
   %p{:style=>"text-align: center;"}
-    %a{:href=>'/link'}='Link' 
-    %a{:href=>'/unlink'}='Unlink' 
-    %a{:href=>'/delete'}='Delete' 
-    %a{:href=>'/deselect'}='Deselect'
-    %a{:href=>'/web'}='New'
-    %a{:href=>'/search'}='Search'
-    %a{:href=>'/toggle_search_coloring'}='(Toggle Coloring)'
-    %a{:href=>'/save'}='Save'
+    %a{:href=>'/link/' + @webIden}='Link' 
+    %a{:href=>'/unlink/' + @webIden}='Unlink' 
+    %a{:href=>'/delete/' + @webIden}='Delete' 
+    %a{:href=>'/deselect/' + @webIden}='Deselect'
+    %a{:href=>'/web/' + @webIden}='New'
+    %a{:href=>'/search/' + @webIden}='Search'
+    %a{:href=>'/toggle_search_coloring/' + @webIden}='(Toggle Coloring)'
+    %a{:href=>'/'}='Home'
