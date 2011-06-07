@@ -551,7 +551,6 @@ end
 #globals
 $uuid = UUID.new
 $redirect = '/'
-$vertex = nil #TODO: PUT VERTEX IN WEB???
 $webs = {}
 
 get '/' do
@@ -579,9 +578,6 @@ end
 get '/size/:width/:height' do
   $width = params[:width].to_i
   $height = params[:height].to_i
-#   $web = Web.new(width,height)    
-#   $web = Web.load('test.yml') #TODO: MAKE GENERAL
-#   $web.set_width_height(width,height)
   redirect $redirect
 end
 
@@ -614,37 +610,45 @@ end
 
 get '/view_thought/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @iden = params[:iden]
   @webIden = params[:web_iden]
+  @vertex = $webs[@webIden].lookup_vertex(@iden)
   haml :view_thought
 end
 
 get '/view_document/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @iden = params[:iden]
   @webIden = params[:web_iden]
+  @vertex = $webs[@webIden].lookup_vertex(@iden)
   haml :view_document
 end
 
 get '/edit_thought/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @iden = params[:iden]
   @webIden = params[:web_iden]
+  @vertex = $webs[@webIden].lookup_vertex(@iden)
   haml :edit_thought
 end
 
 get '/edit_document/:web_iden/:iden' do
   content_type 'application/xml', :charset => 'utf-8'
+  @iden = params[:iden]
   @webIden = params[:web_iden]
+  @vertex = $webs[@webIden].lookup_vertex(@iden)
   haml :edit_document
 end
 
 get '/view/:web_iden/:iden' do
   iden = params[:iden]
   @webIden = params[:web_iden]
-  $vertex = $webs[@webIden].lookup_vertex(iden)
-  if $vertex == nil #could hapen if you delete the vertex while in viewing mode
+  vertex = $webs[@webIden].lookup_vertex(iden)
+  if vertex == nil #could hapen if you delete the vertex while in viewing mode
     $redirect = '/web/' + @webIden
-  elsif $vertex.type == :thought
+  elsif vertex.type == :thought
     $redirect = '/view_thought/' + @webIden + '/' + iden
-  elsif $vertex.type == :document
+  elsif vertex.type == :document
     $redirect = '/view_document/' + @webIden + '/' + iden
   end
   redirect $redirect  end
@@ -652,12 +656,12 @@ get '/view/:web_iden/:iden' do
 get '/edit/:web_iden/:iden' do
   iden = params[:iden]
   @webIden = params[:web_iden]
-  $vertex = $webs[@webIden].lookup_vertex(iden)
-  if $vertex == nil #could hapen if you delete the vertex while in editing mode
+  vertex = $webs[@webIden].lookup_vertex(iden)
+  if vertex == nil #could hapen if you delete the vertex while in editing mode
     $redirect = '/web/' + @webIden
-  elsif $vertex.type == :thought
+  elsif vertex.type == :thought
     $redirect = '/edit_thought/' + @webIden + '/' + iden
-  elsif $vertex.type == :document
+  elsif vertex.type == :document
     $redirect = '/edit_document/' + @webIden + '/' + iden
   end
   redirect $redirect  
@@ -667,7 +671,7 @@ get '/doc/:web_iden/:iden/:filename' do
   iden = params[:iden]
   @webIden = params[:web_iden]
   doc = $webs[@webIden].lookup_vertex(iden)
-  content_type doc.type
+  content_type doc.mimeType
   doc.read
 end
 
@@ -755,18 +759,20 @@ puts params[:file].to_s
   redirect $redirect
 end
 
-post '/save_thought_edit/:web_iden' do
-  #$vertex was already set to the thought we want in get '/edit/:iden'
+post '/save_thought_edit/:web_iden/:iden' do
+  iden = params[:iden]
   @webIden = params[:web_iden]
-  $vertex.title = params[:title]
-  $vertex.comment = params[:comment]
+  vertex = $webs[@webIden].lookup_vertex(iden)
+  vertex.title = params[:title]
+  vertex.comment = params[:comment]
   redirect $redirect
 end
 
-post '/save_document_edit/:web_iden' do
-  #$vertex was already set to the document we want in get '/edit/:iden'
+post '/save_document_edit/:web_iden/:iden' do
+  iden = params[:iden]
   @webIden = params[:web_iden]
-  $vertex.reference = params[:reference] #TODO: MAKE WORK WITH NON STRING REFERENCES
+  vertex = $webs[@webIden].lookup_vertex(iden)
+  vertex.reference = params[:reference] #TODO: MAKE WORK WITH NON STRING REFERENCES
   redirect $redirect
 end
 
@@ -849,17 +855,17 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit Thought
-      %form{:action=>'/save_thought_edit/' + @webIden, :method=>'post'}
+      %form{:action=>"/save_thought_edit/#{@webIden}/#{@iden}", :method=>'post'}
         %p
           Title:
-          %input{:name=>'title', :size=>'40', :type=>'text', :value=>$vertex.title}
+          %input{:name=>'title', :size=>'40', :type=>'text', :value=>@vertex.title}
           Text:
-          %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}=$vertex.comment
+          %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}=@vertex.comment
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
         %a{:href=>'/web/' + @webIden}="New"
-        %a{:href=>"/view/#{@webIden}/#{$vertex.iden}"}="View"
-        %a{:href=>"/select/#{@webIden}/#{$vertex.iden}"}="Select"
+        %a{:href=>"/view/#{@webIden}/#{@iden}"}="View"
+        %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
 
 @@ edit_document
@@ -872,15 +878,15 @@ __END__
     =haml(:svg_div)
     %div{:id=>"newedit", :style=>"width: 300px; float: right; border-width: 1px; border-style: solid; border-color: black;"}    
       %h2 Edit Document
-      %form{:action=>'/save_document_edit/' + @webIden, :method=>'post'}
+      %form{:action=>"/save_document_edit/#{@webIden}/#{@iden}", :method=>'post'}
         %p
           Reference:
-          %input{:name=>'reference', :size=>'40', :type=>'text', :value=>$vertex.reference}
+          %input{:name=>'reference', :size=>'40', :type=>'text', :value=>@vertex.reference}
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
         %a{:href=>'/web/' + @webIden}="New"
-        %a{:href=>"/view/#{@webIden}/#{$vertex.iden}"}="View"
-        %a{:href=>"/select/#@webIden{@webIden}/#{$vertex.iden}"}="Select"
+        %a{:href=>"/view/#{@webIden}/#{@iden}"}="View"
+        %a{:href=>"/select/#@webIden{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
 
 @@ view_thought
@@ -895,14 +901,14 @@ __END__
       %h2 View Thought
       %p
         Title: 
-        =$vertex.title
+        =@vertex.title
         %br
         Text: 
-        =$vertex.comment
+        =@vertex.comment
       %p
         %a{:href=>'/web/' + @webIden}="New"
-        %a{:href=>"/edit/#{@webIden}/#{$vertex.iden}"}="Edit"
-        %a{:href=>"/select/#{@webIden}/#{$vertex.iden}"}="Select"
+        %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
+        %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
 
 @@ view_document
@@ -917,13 +923,13 @@ __END__
       %h2 View Document
       %p
         Reference: 
-        =$vertex.reference
+        =@vertex.reference
         %br
-        %a{:href=>"/doc/#{$vertex.iden}/#{$vertex.filename}"}="Download #{$vertex.filename}"
+        %a{:href=>"/doc/#{@webIden}/#{@iden}/#{@vertex.filename}"}="Download #{@vertex.filename}"
       %p
         %a{:href=>'/web/' + @webIden}="New"
-        %a{:href=>"/edit/#{@webIden}/#{$vertex.iden}"}="Edit"
-        %a{:href=>"/select/#{@webIden}/#{$vertex.iden}"}="Select"
+        %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
+        %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
 
 @@ search
