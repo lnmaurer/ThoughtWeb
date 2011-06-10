@@ -13,6 +13,7 @@ require 'ferret' #actually using the 'jk-ferret' gem
 # require 'mime/types'
 #other requirements:
 #the program 'pdftotext' from package 'poppler-utils'
+#ImageMagick for converting files to a format that can be OCRed
 #tesseract OCR package
 
 include Math
@@ -24,6 +25,7 @@ class Vector
   end
 end
 
+#TODO: ADD TAGS?
 class Vertex
   attr_reader :iden, :links, :times, :type
   attr_accessor :position, :searchScore
@@ -80,7 +82,7 @@ class Vertex
   end 
 end
 
-#TODO: COMPLETE THIS
+#TODO: COMPLETE THIS CLASS
 #possible types: URL, to external ThoughtWeb
 class ExternalLink < Vertex
   def initialize(web, position, name, link)#,type)
@@ -108,8 +110,8 @@ class TWDocument < Vertex
     @ocr = (option == 'ocr') #if this is true, we'll do OCR later
     @hash = Digest::MD5.file(tempfile).to_s
 
-    @iden = $uuid.generate
-    @web = web
+    @iden = $uuid.generate #need to generate here so that we can make the directory
+    @web = web #ditto
     FileUtils.mkdir(@web.iden + '/files/' + @iden)
     FileUtils.cp(tempfile.path, path)
     
@@ -118,6 +120,10 @@ class TWDocument < Vertex
   
   def path
     @web.iden + '/files/' + @iden + '/' + @filename
+  end
+  
+  def quoted_path
+    '"' + path + '"'
   end
   
   def open_file
@@ -136,11 +142,19 @@ class TWDocument < Vertex
     #TODO: INCLUDE MORE TYPES
     if @mimeType == 'text/plain' #TODO: GET mime/types GEM WORKING SO WE CAN TELL WHAT OTHER TYPES ARE TEXT
       read
-    elsif @ocr #TODO: IMPLIMENT OCR USING TESSERACT (AND IMAGEMAGIK???)
-      #NOTE: SHOULD SAVE TEXT AFTER OCR SO DON'T HAVE TO DO EVERY TIME text IS CALLED (HAPPENS WHENEVER A THOUGHT IT UPDATED)
-      
+    elsif @ocr #TODO: tesseract doesn't seem to work as well as OCRopus, so use that instead
+      #since OCR is costly, will only OCR it once, and save text in @ocredTxt
+      if @ocredTxt == nil
+	Kernel.system("convert -density 400x400 #{quoted_path} #{@web.iden}/temppdf.tif")
+	Kernel.system("tesseract #{@web.iden}/temppdf.tif #{@web.iden}/temppdf") #the output file will be temppdf.txt because tesseract adds the '.txt' on it's own
+	@ocredTxt = File.read(@web.iden + '/temppdf.txt') 
+	FileUtils.rm(@web.iden + '/temppdf.tif')
+	FileUtils.rm(@web.iden + '/temppdf.txt')
+      else
+	@ocredTxt
+      end
     elsif @mimeType == 'application/pdf' #TODO: TRY pdf-reader GEM
-      Kernel.system("pdftotext #{path} #{@web.iden}/temppdf.txt")
+      Kernel.system("pdftotext #{quoted_path} #{@web.iden}/temppdf.txt")
       text = File.read(@web.iden + '/temppdf.txt')
       FileUtils.rm(@web.iden + '/temppdf.txt')
       return text
@@ -548,9 +562,11 @@ class Web
   end
 end
 
+#TODO: MAKE SESSION CLASS TO KEEP TRACK OF ONE USER'S SESSION
+
 #globals
 $uuid = UUID.new
-$redirect = '/'
+$redirect = '/' #TODO: MAKE PART OF NEW SESSION CLASS, OR EVEN PART OF EACH WEB (SO THAT A PERSON CAN USE MULTIPLE WEBS ADN THEY ALL KEEP TRACK OF WHERE TO REDIRECT)
 $webs = {}
 
 get '/' do
@@ -560,6 +576,7 @@ get '/' do
   #get screen size if it's unknown
   redirect '/sizer' if $width == nil or $height == nil
   
+  #TODO: CHANGE TO LOADING/UNLOADING WEBS AS NEEDED
   #load past webs if they exist and haven't been loaded
   if $webs.empty? and File.exists?('webs.yaml')
     YAML.load(File.open('webs.yaml')).each do |id|
@@ -675,6 +692,14 @@ get '/doc/:web_iden/:iden/:filename' do
   doc.read
 end
 
+get '/doc_content/:web_iden/:iden/:filename' do
+  iden = params[:iden]
+  @webIden = params[:web_iden]
+  doc = $webs[@webIden].lookup_vertex(iden)
+  content_type 'text/plain'
+  doc.content
+end
+
 get '/center/:web_iden/:iden' do
   @webIden = params[:web_iden]
   iden = params[:iden]
@@ -710,12 +735,6 @@ end
 get '/deselect/:web_iden' do
   @webIden = params[:web_iden]
   $webs[@webIden].deselect_all
-  redirect $redirect
-end
-
-get '/save/:web_iden' do
-  @webIden = params[:web_iden]
-  $webs[@webIden].save
   redirect $redirect
 end
 
@@ -926,6 +945,9 @@ __END__
         =@vertex.reference
         %br
         %a{:href=>"/doc/#{@webIden}/#{@iden}/#{@vertex.filename}"}="Download #{@vertex.filename}"
+        - if @vertex.mimeType != 'text/plain'
+          %br
+          %a{:href=>"/doc_content/#{@webIden}/#{@iden}/#{@vertex.filename}.txt"}="Download as plain text"
       %p
         %a{:href=>'/web/' + @webIden}="New"
         %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
