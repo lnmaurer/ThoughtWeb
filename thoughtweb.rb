@@ -5,6 +5,7 @@ require 'fileutils'
 require 'tempfile'
 require 'tmpdir'
 require 'yaml'
+require 'open3'
 #gems requirements:
 require 'rubygems'
 require 'haml'
@@ -15,7 +16,7 @@ require 'ferret' #actually using the 'jk-ferret' gem
 #other requirements:
 #the program 'pdftotext' from package 'poppler-utils'
 #ImageMagick for converting files to a format that can be OCRed
-#OCRopus OCR package
+#tesseract OCR package (OCRopus code is written but commented out due to a bug in OCRopus)
 
 include Math
 include Ferret
@@ -25,6 +26,8 @@ class Vector
     self/self.r
   end
 end
+
+#TODO: IMPROVE UPDATE MECHANISMS SO NOT SO ROUNDABOUT, ESPECIALLY NOW THAT THREADS CAN ADD INFO AFTER DOCUMENTS ARE CREATED
 
 #TODO: ADD TAGS?
 class Vertex
@@ -43,14 +46,18 @@ class Vertex
   end
   #name, content, type
   
-  def update_times_and_index
-    #update the time
-    @times << Time.new
+  def update_index
     #update the index
     @web.index.delete(@iden)
     @web.index << {:id=>@iden, :title=>name, :content=>content, :update_time=>@times[-1].to_s, :type=>@type.to_s}
     #signal that the search results need updating
-    @web.searchNeedsUpdate = true
+    @web.searchNeedsUpdate = true    
+  end
+  
+  def update_times_and_index
+    #update the time
+    @times << Time.new
+    self.update_index
   end
   
   def prepare_for_deletion
@@ -117,6 +124,28 @@ class TWDocument < Vertex
     FileUtils.cp(tempfile.path, path)
     
     super(web, position, :document) #needs to come after FileUtils stuff so we can read from the doc
+    
+    #since OCR is costly, will only OCR it once, and save text in @ocredTxt
+    if @ocr
+      @ocredTxt = '' #if not done with OCR this gives the 'content' function something to return
+      output = "Performing OCR on #{@filename}:\n"
+      thread = Thread.new do
+	Dir.mktmpdir do |tempDir|
+	  output << "Starting image format conversion...\n"
+	  Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/tempOCR.tif")
+	  output << "Image format conversion complete!\n"
+	  #the output file will be tempOCR.txt because tesseract adds the '.txt' on it's own
+	  Open3.popen3("tesseract #{tempDir}/tempOCR.tif #{tempDir}/tempOCR") do |stdin, stdout, stderr, wait_thr|
+	    while not stderr.eof
+	      output << stderr.gets #for whatever reason, tesseract outpus on stderr
+	    end
+	  end
+	  @ocredTxt = File.read(tempDir + '/tempOCR.txt')
+	end
+	self.update_index
+      end
+      @web.threads << [thread, output]
+    end
   end
   
   def folder_path
@@ -151,33 +180,9 @@ class TWDocument < Vertex
   def content
     #TODO: INCLUDE MORE TYPES
     if @mimeType == 'text/plain' #TODO: GET mime/types GEM WORKING SO WE CAN TELL WHAT OTHER TYPES ARE TEXT
-      read
-    elsif @ocr #TODO: tesseract doesn't seem to work as well as OCRopus, so use that instead
-      #since OCR is costly, will only OCR it once, and save text in @ocredTxt
-      if @ocredTxt == nil
-	Dir.mktmpdir do |tempDir|
-	  Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.tif")
-	  Kernel.system("tesseract #{tempDir}/temppdf.tif #{tempDir}/temppdf") #the output file will be temppdf.txt because tesseract adds the '.txt' on it's own
-	  @ocredTxt = File.read(tempDir + '/temppdf.txt') 	
-	end
-#the following should work but doesn't because of a bug in tesseract (which OCRopus uses); it should be fixed in tesseract version 3.00, but my version OCRopus doesn't seem to know how to use that yet
-#http://code.google.com/p/tesseract-ocr/issues/detail?id=265#c0
-#TODO: sort file names so they're in the right order
-# 	Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.png")#TODO: don't convert if it's already in the right format
-# 	fileList = %x[ls #{tempDir}/*.png].gsub("\n",' ')
-# 	Kernel.system("ocroscript recognize #{fileList} > #{tempDir}/temppdf.hocr")
-# 	@ocredTxt = %x[ocroscript hocr-to-text #{tempDir}/temppdf.hocr] 
-
-#the following is a partial workaround; it OCRs each page seperatly, so that if one page fails, the whole thing doesn't
-# 	Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.png")#TODO: don't convert if it's already in the right format
-# 	@ocredTxt = ''
-# 	%x[ls #{tempDir}/*.png].split("\n").each do |fileName| #TODO: sort file names so they're in the right order
-# 	  Kernel.system("ocroscript recognize #{fileName} > #{tempDir}/temppdf.hocr")
-# 	  @ocredTxt<<= %x[ocroscript hocr-to-text #{tempDir}/temppdf.hocr]
-# 	end
-      else
-	@ocredTxt
-      end
+      self.read
+    elsif @ocr
+      @ocredTxt
     elsif @mimeType == 'application/pdf' #TODO: TRY pdf-reader GEM
       Dir.mktmpdir do |tempDir|
 	Kernel.system("pdftotext #{quoted_path} #{tempDir}/temppdf.txt")
@@ -227,7 +232,7 @@ class Thought < Vertex
 end
 
 class Web
-  attr_reader :vertices, :searchTerm, :searchType, :iden, :title
+  attr_reader :vertices, :searchTerm, :searchType, :iden, :title, :threads
   attr_accessor :index, :searchNeedsUpdate, :colorBySearch
   
   def path
@@ -241,6 +246,7 @@ class Web
   end
   
   def save
+    self.clean_threads
     File.open(self.path + 'web.yaml', "w") {|f| f.write(self.to_yaml) }
     @index.flush
   end
@@ -249,6 +255,7 @@ class Web
     @title = title
     @vertices = []
 #     @recent = []
+    @threads = [] #contains [thread, output] pairs
     @selected = []
     @center = nil
     @searchType = :simple
@@ -262,8 +269,13 @@ class Web
     FileUtils.mkdir(self.path)
     @index = Index::Index.new(:path=> self.path + 'index.ferret')
     FileUtils.mkdir(self.path + 'files')
+#     @threadCleaner
   end
 
+  def to_yaml_properties
+    [ '@title', '@vertices', '@selected', '@center', '@searchType', '@searchTerm', '@searchNeedsUpdate', '@maxSearchScore', '@colorBySearch', '@width', '@height', '@iden']
+  end  
+  
   #TODO: REMOVE WIDTH AND HEIGHT FROM WEB??? MAKE A SEPERATE VIEW CLASS???
   def set_width_height(w,h)
     @width = w - 5
@@ -305,7 +317,7 @@ class Web
 	#force due to potential
 	#from cosh potential
 	force = Vector[-sin(PI/2*x/w)/cos(PI/2*x/w)**2, -sin(PI/2*y/h)/cos(PI/2*y/h)**2]*potC
-	
+
 	#force due to springs
 	ver.links.each do |link|
 	  pos2 = lookup_vertex(link).position
@@ -376,7 +388,8 @@ class Web
   end
   
   def to_svg
-    repeat_search if @colorBySearch and @searchNeedsUpdate
+    self.clean_threads #TODO: FIND BETTER PLACE TO DO THIS. MAYBE A THREAD TO CLEAN UP OTHER THREADS?
+    self.repeat_search if @colorBySearch and @searchNeedsUpdate
     
     svg = %Q&
       <svg:svg width="#{@width}px" height="#{@height}px" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1">
@@ -589,6 +602,18 @@ class Web
     
     #TODO: SORT_BY IS SUPPOSED TO BE SLOW? CHECK AND MOVE TO DIFFERENT SORT
     @vertices.collect{|ver| [ver.iden, ver.searchScore]}.reject{|(id,sc)| sc == 0.0}.sort_by{|(id,sc)| -sc} #negative sign makes it sort from highest to lowest
+  end
+  
+  def clean_threads
+    @threads.reject!{|(th,op)| not th.status} #delete all threads that aren't still running
+  end
+  
+  def active_threads?
+    @threads.find{|(th,op)| th.status} != nil
+  end
+  
+  def active_threads
+    @threads.reject{|(th,op)| not th.status}
   end
 end
 
@@ -852,6 +877,8 @@ post '/search/:web_iden' do
   redirect $redirect
 end
 
+#TODO: FIGURE OUT WAY TO REFRESH thread_div ON PAGES WE CAN'T COMPLETELY REFRESH (E.G. ONES WE'RE EDITING AND DON'T WANT TO LOSE CHANGES)
+
 __END__
 
 @@ sizer
@@ -896,6 +923,8 @@ __END__
 %html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
   %head
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    - if $webs[@webIden].active_threads?
+      %meta{"http-equiv" => "refresh", :content=> "1"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     =haml(:svg_div)
@@ -905,6 +934,7 @@ __END__
         %a{:href=>'/new_thought/' + @webIden}="New Thought"
         %a{:href=>'/new_document/' + @webIden}="New Document"
     =haml(:control_div)
+    =haml(:thread_div)
 
 @@ edit_thought
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
@@ -955,6 +985,8 @@ __END__
 %html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
   %head
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    - if $webs[@webIden].active_threads?
+      %meta{"http-equiv" => "refresh", :content=> "1"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     =haml(:svg_div)
@@ -971,12 +1003,15 @@ __END__
         %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
         %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
-
+    =haml(:thread_div)
+    
 @@ view_document
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
 %html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
   %head
     %meta{"http-equiv" => "Content-type", :content =>" text/html;charset=UTF-8"}
+    - if $webs[@webIden].active_threads?
+      %meta{"http-equiv" => "refresh", :content=> "1"}
     %title="ThoughtWeb"
   %body{:style=>"margin: 0px;"}
     =haml(:svg_div)
@@ -995,7 +1030,8 @@ __END__
         %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
         %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
-
+    =haml(:thread_div)
+    
 @@ search
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
 %html{:xmlns => "http://www.w3.org/1999/xhtml", "xml:lang" => "en"}
@@ -1087,7 +1123,7 @@ __END__
       %p
         %a{:href=>'/web/' + @webIden}="New"
     =haml(:control_div)
-
+    
 @@ svg_div
 %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
   =$webs[@webIden].to_svg
@@ -1103,3 +1139,10 @@ __END__
     %a{:href=>'/search/' + @webIden}='Search'
     %a{:href=>'/toggle_search_coloring/' + @webIden}='(Toggle Coloring)'
     %a{:href=>'/'}='Home'
+    
+@@ thread_div
+- if $webs[@webIden].active_threads?
+  %div{:id=>"control", :style=>"width: 300px; float: right; clear:right ; border-width: 0px 1px 1px 1px; border-style: solid; border-color: black;"}
+    %h3="Tasks running in the background:"
+    - $webs[@webIden].active_threads.each do |(th,op)|
+      %p=op.gsub(/\n/,'<br />')
