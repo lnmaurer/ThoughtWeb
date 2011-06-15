@@ -3,18 +3,19 @@ require 'matrix'
 require 'digest/md5'
 require 'fileutils'
 require 'tempfile'
+require 'tmpdir'
+require 'yaml'
 #gems requirements:
 require 'rubygems'
 require 'haml'
 require 'sinatra'
 require 'uuid'
-require 'yaml'
 require 'ferret' #actually using the 'jk-ferret' gem
 # require 'mime/types'
 #other requirements:
 #the program 'pdftotext' from package 'poppler-utils'
 #ImageMagick for converting files to a format that can be OCRed
-#tesseract OCR package
+#OCRopus OCR package
 
 include Math
 include Ferret
@@ -112,14 +113,18 @@ class TWDocument < Vertex
 
     @iden = $uuid.generate #need to generate here so that we can make the directory
     @web = web #ditto
-    FileUtils.mkdir(@web.iden + '/files/' + @iden)
+    FileUtils.mkdir(folder_path)
     FileUtils.cp(tempfile.path, path)
     
     super(web, position, :document) #needs to come after FileUtils stuff so we can read from the doc
   end
   
+  def folder_path
+    @web.path + 'files/' + @iden + '/'
+  end
+  
   def path
-    @web.iden + '/files/' + @iden + '/' + @filename
+    folder_path + @filename
   end
   
   def quoted_path
@@ -138,6 +143,11 @@ class TWDocument < Vertex
     @reference.to_s
   end
   
+  #TODO: when we switch over to OCRopus, it can give output in html, so make this an option for OCRed documents
+  def html_content
+    
+  end
+  
   def content
     #TODO: INCLUDE MORE TYPES
     if @mimeType == 'text/plain' #TODO: GET mime/types GEM WORKING SO WE CAN TELL WHAT OTHER TYPES ARE TEXT
@@ -145,18 +155,34 @@ class TWDocument < Vertex
     elsif @ocr #TODO: tesseract doesn't seem to work as well as OCRopus, so use that instead
       #since OCR is costly, will only OCR it once, and save text in @ocredTxt
       if @ocredTxt == nil
-	Kernel.system("convert -density 400x400 #{quoted_path} #{@web.iden}/temppdf.tif")
-	Kernel.system("tesseract #{@web.iden}/temppdf.tif #{@web.iden}/temppdf") #the output file will be temppdf.txt because tesseract adds the '.txt' on it's own
-	@ocredTxt = File.read(@web.iden + '/temppdf.txt') 
-	FileUtils.rm(@web.iden + '/temppdf.tif')
-	FileUtils.rm(@web.iden + '/temppdf.txt')
+	Dir.mktmpdir do |tempDir|
+	  Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.tif")
+	  Kernel.system("tesseract #{tempDir}/temppdf.tif #{tempDir}/temppdf") #the output file will be temppdf.txt because tesseract adds the '.txt' on it's own
+	  @ocredTxt = File.read(tempDir + '/temppdf.txt') 	
+	end
+#the following should work but doesn't because of a bug in tesseract (which OCRopus uses); it should be fixed in tesseract version 3.00, but my version OCRopus doesn't seem to know how to use that yet
+#http://code.google.com/p/tesseract-ocr/issues/detail?id=265#c0
+#TODO: sort file names so they're in the right order
+# 	Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.png")#TODO: don't convert if it's already in the right format
+# 	fileList = %x[ls #{tempDir}/*.png].gsub("\n",' ')
+# 	Kernel.system("ocroscript recognize #{fileList} > #{tempDir}/temppdf.hocr")
+# 	@ocredTxt = %x[ocroscript hocr-to-text #{tempDir}/temppdf.hocr] 
+
+#the following is a partial workaround; it OCRs each page seperatly, so that if one page fails, the whole thing doesn't
+# 	Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.png")#TODO: don't convert if it's already in the right format
+# 	@ocredTxt = ''
+# 	%x[ls #{tempDir}/*.png].split("\n").each do |fileName| #TODO: sort file names so they're in the right order
+# 	  Kernel.system("ocroscript recognize #{fileName} > #{tempDir}/temppdf.hocr")
+# 	  @ocredTxt<<= %x[ocroscript hocr-to-text #{tempDir}/temppdf.hocr]
+# 	end
       else
 	@ocredTxt
       end
     elsif @mimeType == 'application/pdf' #TODO: TRY pdf-reader GEM
-      Kernel.system("pdftotext #{quoted_path} #{@web.iden}/temppdf.txt")
-      text = File.read(@web.iden + '/temppdf.txt')
-      FileUtils.rm(@web.iden + '/temppdf.txt')
+      Dir.mktmpdir do |tempDir|
+	Kernel.system("pdftotext #{quoted_path} #{tempDir}/temppdf.txt")
+	text = File.read(tempDir + '/temppdf.txt')
+      end
       return text
     else #need to return something
       ''
@@ -164,7 +190,7 @@ class TWDocument < Vertex
   end
   
   def prepare_for_deletion #it's a shame ruby doesn't have a destructor...
-    FileUtils.rm_r('files/' + @iden)
+    FileUtils.rm_r(folder_path)
   end
 end
 
@@ -204,14 +230,18 @@ class Web
   attr_reader :vertices, :searchTerm, :searchType, :iden, :title
   attr_accessor :index, :searchNeedsUpdate, :colorBySearch
   
-  def self.load(folder)
-    web = YAML.load(File.open(folder + '/web.yaml'))
-    web.index = Index::Index.new(:path=> folder + '/index.ferret')
+  def path
+    'webs/' + @iden + '/'
+  end
+  
+  def self.load(id)
+    web = YAML.load(File.open('webs/' + id + '/web.yaml'))
+    web.index = Index::Index.new(:path=> 'webs/' + id + '/index.ferret')
     return web
   end
   
   def save
-    File.open(@iden + '/web.yaml', "w") {|f| f.write(self.to_yaml) }
+    File.open(self.path + 'web.yaml', "w") {|f| f.write(self.to_yaml) }
     @index.flush
   end
   
@@ -229,9 +259,9 @@ class Web
     @width = width - 5
     @height = height - 5
     @iden = $uuid.generate
-    FileUtils.mkdir(@iden)
-    @index = Index::Index.new(:path=> @iden + '/index.ferret')
-    FileUtils.mkdir(@iden + '/files')
+    FileUtils.mkdir(self.path)
+    @index = Index::Index.new(:path=> self.path + 'index.ferret')
+    FileUtils.mkdir(self.path + 'files')
   end
 
   #TODO: REMOVE WIDTH AND HEIGHT FROM WEB??? MAKE A SEPERATE VIEW CLASS???
@@ -576,10 +606,15 @@ get '/' do
   #get screen size if it's unknown
   redirect '/sizer' if $width == nil or $height == nil
   
+  #make the webs/ dir if it doesn't exist
+  unless File.directory?('webs/')
+    FileUtils.mkdir('webs/')
+  end
+  
   #TODO: CHANGE TO LOADING/UNLOADING WEBS AS NEEDED
   #load past webs if they exist and haven't been loaded
-  if $webs.empty? and File.exists?('webs.yaml')
-    YAML.load(File.open('webs.yaml')).each do |id|
+  if $webs.empty? and File.exists?('webs/webs.yaml')
+    YAML.load(File.open('webs/webs.yaml')).each do |id|
       $webs.merge!({id => Web.load(id)})
     end
   end
@@ -590,6 +625,12 @@ end
 get '/sizer' do
   content_type 'application/xml', :charset => 'utf-8'
   haml :sizer
+end
+
+get '/delete_all' do
+  $webs = {}
+  FileUtils.rm_r('webs/')
+  redirect '/'
 end
 
 get '/size/:width/:height' do
@@ -750,7 +791,7 @@ post '/new_web' do
   newWeb = Web.new(title, $width, $height)
   newWeb.save #to make sure yaml file gets created
   $webs.merge!({newWeb.iden => newWeb})
-  File.open('webs.yaml', "w") {|f| f.write($webs.keys.to_yaml)} #save updated list of webs
+  File.open('webs/webs.yaml', "w") {|f| f.write($webs.keys.to_yaml)} #save updated list of webs
   $redirect = 'web/' + newWeb.iden
   redirect $redirect
 end
@@ -848,6 +889,7 @@ __END__
         Title:
         %input{:name=>'title', :size=>'40', :type=>'text'}
         %input{:type=>'submit', :value=>'Create'}
+    %a{:href=>'/delete_all'}='Delete All'
   
 @@ web
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" "http://www.w3.org/2002/04/xhtml-math-svg/xhtml-math-svg.dtd">
