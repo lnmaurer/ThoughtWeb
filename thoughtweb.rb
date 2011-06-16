@@ -35,13 +35,14 @@ end
 class Vertex
   attr_reader :iden, :links, :times, :type
   attr_accessor :position, :searchScore
-  def initialize(web, position, type)
+  def initialize(web, position, type, tags)
     @iden = $uuid.generate if @iden == nil
     @web = web
     @position = position
     @searchScore = 0.0
     @links = []
     @times = []
+    self.tags=tags
     @type = type
 
      update_times_and_index
@@ -50,7 +51,7 @@ class Vertex
   def update_index
     #update the index
     @web.index.delete(@iden)
-    @web.index << {:id=>@iden, :title=>name, :content=>content, :update_time=>@times[-1].to_s, :type=>@type.to_s}
+    @web.index << {:id=>@iden, :title=>self.name, :content=>self.content, :tags=>self.tags_string(' '), :update_time=>@times[-1].to_s, :type=>@type.to_s}
     #signal that the search results need updating
     @web.searchNeedsUpdate = true    
   end
@@ -63,6 +64,16 @@ class Vertex
   
   def prepare_for_deletion
     #nothing to do by default
+  end
+
+  def tags
+    self.tags_string
+  end
+  
+  def tags=(t)
+    #TODO: ONLY UPDATE IF THERE HAVE BEEN CHANGES
+    @tags = t.split(',').collect{|s| s.strip}
+    update_times_and_index
   end
   
   def link(idens)
@@ -88,15 +99,19 @@ class Vertex
     end
    
     update_times_and_index if changesMade
-  end 
+  end
+  
+  def tags_string(joiner = ',')
+    '' + @tags.inject{|list, tag| list + joiner + ' ' + tag}
+  end
 end
 
 #TODO: COMPLETE THIS CLASS
 #possible types: URL, to external ThoughtWeb
 class ExternalLink < Vertex
-  def initialize(web, position, name, link)#,type)
+  def initialize(web, position, name, tags, link)#,type)
     
-    super(web, position, :externalLink)
+    super(web, position, :externalLink, tags)
   end
 end
 
@@ -104,7 +119,7 @@ end
 class TWDocument < Vertex
   attr_reader :iden, :filename, :mimeType, :hash, :ocr
   attr_accessor :reference
-  def initialize(web, position, tempfile, filename, mimeType, reference, option)
+  def initialize(web, position, tempfile, filename, mimeType, reference, tags, option)
     @filename = filename
     if option == 'txt' #this option forces the file to be interperted as plain text
       @mimeType = 'text/plain'
@@ -124,7 +139,7 @@ class TWDocument < Vertex
     FileUtils.mkdir(folder_path)
     FileUtils.cp(tempfile.path, path)
     
-    super(web, position, :document) #needs to come after FileUtils stuff so we can read from the doc
+    super(web, position, :document, tags) #needs to come after FileUtils stuff so we can read from the doc
     
     #since OCR is costly, will only OCR it once, and save text in @ocredTxt
     if @ocr
@@ -212,10 +227,10 @@ end
 class Thought < Vertex
   attr_reader :title, :comment, :links, :iden, :times
   attr_accessor :position, :searchScore
-  def initialize(web, position, title, comment)
+  def initialize(web, position, title, comment, tags)
     @title = title
     @comment = comment
-    super(web, position, :thought)
+    super(web, position, :thought, tags)
   end
   
   def name
@@ -494,14 +509,14 @@ class Web
     Vector[(@width-100)*(rand-0.5),(@height-100)*(rand-0.5)]
   end
   
-  def add_thought(title,comment)
-    @vertices << Thought.new(self, random_position, title, comment)
+  def add_thought(title, comment, tags)
+    @vertices << Thought.new(self, random_position, title, comment, tags)
     update_positions
     save
   end  
   
-  def add_document(tempfile, filename, mimeType, reference, option)
-    @vertices << TWDocument.new(self, random_position, tempfile, filename, mimeType, reference, option)
+  def add_document(tempfile, filename, mimeType, reference, tags, option)
+    @vertices << TWDocument.new(self, random_position, tempfile, filename, mimeType, reference, tags, option)
     update_positions
     save
   end
@@ -560,7 +575,7 @@ class Web
     @index.search_each(@searchTerm) do |id, score| #this id isn't the UUID asigned to the vertex, but the location in @index
       lookup_vertex(@index[id][:id]).searchScore = score
     end
-    update_maxSearchScore #TODO: BETTER PLACE TO PUT THIS? WILL BE CALLED TWICE FOR NON-SIMPLE SEARCHES
+    self.update_maxSearchScore #TODO: BETTER PLACE TO PUT THIS? WILL BE CALLED TWICE FOR NON-SIMPLE SEARCHES
     save
   end
 
@@ -590,8 +605,8 @@ class Web
   def association_search(st = nil)
     ferretScores, assocScores = find_scores(st)
     @vertices.zip(assocScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores  
-    update_maxSearchScore
-    save
+    self.update_maxSearchScore
+    self.save
     @searchType = :assoc #need this at end because find_scores does a simple search
   end
   
@@ -599,15 +614,15 @@ class Web
     ferretScores, assocScores = find_scores(st)
     diffScores = assocScores - ferretScores
     @vertices.zip(diffScores.to_a.flatten).each{|(ver,sc)| ver.searchScore = sc} #assign the new scores 
-    update_maxSearchScore
-    save
+    self.update_maxSearchScore
+    self.save
     @searchType = :diff #need this at end because find_scores does a simple search
   end
  
   #returns an array of [id, scwebore] pairs sorted by score from highest to lowest. If the score is zero then the pair isn't returned
   def sorted_search_results
     if @searchNeedsUpdate
-      repeat_search
+      self.repeat_search
       @searchNeedsUpdate = false
     end
     
@@ -738,7 +753,7 @@ get '/view/:web_iden/:iden' do
   iden = params[:iden]
   @webIden = params[:web_iden]
   vertex = $webs[@webIden].lookup_vertex(iden)
-  $redirect = '/view/' + @webIden + '/' + iden #don't want to redirect directly to view_document or view_thought since they don't have to logic for vertex == nil
+  $redirect = '/view/' + @webIden + '/' + iden #don't want to redirect directly to view_document or view_thought since they don't have to logic for vertex == nil. #TODO: FIND A BETTER WAY TO DO THIS
   if vertex == nil #could hapen if you delete the vertex while in viewing mode
     $redirect = '/web/' + @webIden
     redirect $redirect
@@ -839,7 +854,8 @@ post '/new_thought/:web_iden' do
   @webIden = params[:web_iden]
   title = params[:title]
   comment = params[:comment]
-  $webs[@webIden].add_thought(title,comment)
+  tags = params[:tags]
+  $webs[@webIden].add_thought(title, comment, tags)
   redirect $redirect
 end
 
@@ -854,7 +870,7 @@ puts params[:file].to_s
   end
 
   @webIden = params[:web_iden]
-  $webs[@webIden].add_document(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference], params[:opt])
+  $webs[@webIden].add_document(params[:file][:tempfile], params[:file][:filename], params[:file][:type], params[:reference], params[:tags], params[:opt])
   redirect $redirect
 end
 
@@ -864,6 +880,7 @@ post '/save_thought_edit/:web_iden/:iden' do
   vertex = $webs[@webIden].lookup_vertex(iden)
   vertex.title = params[:title]
   vertex.comment = params[:comment]
+  vertex.tags = params[:tags]
   redirect $redirect
 end
 
@@ -872,6 +889,7 @@ post '/save_document_edit/:web_iden/:iden' do
   @webIden = params[:web_iden]
   vertex = $webs[@webIden].lookup_vertex(iden)
   vertex.reference = params[:reference] #TODO: MAKE WORK WITH NON STRING REFERENCES
+  vertex.tags = params[:tags]
   redirect $redirect
 end
 
@@ -964,11 +982,13 @@ __END__
         %p
           Title:
           %input{:name=>'title', :size=>'40', :type=>'text', :value=>@vertex.title}
+          %br
           Text:
           %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}=@vertex.comment
+          %br
+          =haml(:edit_tags)
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
-        %a{:href=>'/web/' + @webIden}="New"
         %a{:href=>"/view/#{@webIden}/#{@iden}"}="View"
         %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
@@ -987,9 +1007,10 @@ __END__
         %p
           Reference:
           %input{:name=>'reference', :size=>'40', :type=>'text', :value=>@vertex.reference}
+          %br
+          =haml(:edit_tags)
           %input{:type=>'submit', :value=>'Save Changes'}
       %p
-        %a{:href=>'/web/' + @webIden}="New"
         %a{:href=>"/view/#{@webIden}/#{@iden}"}="View"
         %a{:href=>"/select/#@webIden{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
@@ -1012,8 +1033,9 @@ __END__
         %br
         Text: 
         =@vertex.comment
+        %br
+        =haml(:view_tags)
       %p
-        %a{:href=>'/web/' + @webIden}="New"
         %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
         %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
@@ -1035,12 +1057,13 @@ __END__
         Reference: 
         =@vertex.reference
         %br
+        =haml(:view_tags)
+        %br
         %a{:href=>"/doc/#{@webIden}/#{@iden}/#{@vertex.filename}"}="Download #{@vertex.filename}"
         - if (@vertex.mimeType != 'text/plain') and (not @vertex.content.empty?)
           %br
           %a{:href=>"/doc_content/#{@webIden}/#{@iden}/#{@vertex.filename}.txt"}="Download as plain text"
       %p
-        %a{:href=>'/web/' + @webIden}="New"
         %a{:href=>"/edit/#{@webIden}/#{@iden}"}="Edit"
         %a{:href=>"/select/#{@webIden}/#{@iden}"}="Select"
     =haml(:control_div)
@@ -1105,8 +1128,11 @@ __END__
         %p
           Title:
           %input{:name=>'title', :size=>'40', :type=>'text'} 
+          %br
           Text:
           %textarea{:name=>"comment", :rows=>"4", :cols=>"30"}
+          %br
+          =haml(:enter_tags)
           %input{:type=>'submit', :value=>'Create Thought'}   
     =haml(:control_div)
 
@@ -1133,11 +1159,25 @@ __END__
           %label{:for=>'txt'}='Force UTF-8'
           %input{:type=>'radio', :name=>'opt', :value=>'ocr', :id=>'ocr'}
           %label{:for=>'ocr'}='OCR'
+          %br
+          =haml(:enter_tags)
           %input{:type=>"submit",:value=>"Upload"}
       %p
         %a{:href=>'/web/' + @webIden}="New"
     =haml(:control_div)
     
+@@ view_tags
+Tags:
+=@vertex.tags
+
+@@ edit_tags
+Tags:
+%input{:name=>'tags', :size=>'40', :type=>'text', :value=>@vertex.tags}
+
+@@ enter_tags
+Tags:
+%input{:name=>'tags', :size=>'40', :type=>'text'}
+
 @@ svg_div
 %div{:id=>"page", :style=>"position: absolute; top: 0%; left: 0%; z-index: -1;"}
   =$webs[@webIden].to_svg
