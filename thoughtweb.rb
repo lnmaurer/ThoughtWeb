@@ -31,7 +31,6 @@ end
 
 #TODO: ADD EDGE CLASS? CERTAINLY SHOULD HAVE STRENGTH OF LINK, BUT MAYBE ALSO COMMENTS AND TAGS
 
-#TODO: ADD TAGS?
 class Vertex
   attr_reader :iden, :links, :times, :type
   attr_accessor :position, :searchScore
@@ -71,9 +70,11 @@ class Vertex
   end
   
   def tags=(t)
-    #TODO: ONLY UPDATE IF THERE HAVE BEEN CHANGES
-    @tags = t.split(',').collect{|s| s.strip}
-    update_times_and_index
+    newTags = t.split(',').collect{|s| s.strip}
+    if newTags.sort != @tags.sort #order matters for array equality, so sort them before comparing -- I assume the order of tags in the list doesn't matter
+      @tags = newTags
+      update_times_and_index
+    end
   end
   
   def link(idens)
@@ -881,6 +882,7 @@ post '/save_thought_edit/:web_iden/:iden' do
   vertex.title = params[:title]
   vertex.comment = params[:comment]
   vertex.tags = params[:tags]
+  $redirect = '/view/' + @webIden + '/' + iden #after saving edit, redirect to viewing
   redirect $redirect
 end
 
@@ -890,6 +892,7 @@ post '/save_document_edit/:web_iden/:iden' do
   vertex = $webs[@webIden].lookup_vertex(iden)
   vertex.reference = params[:reference] #TODO: MAKE WORK WITH NON STRING REFERENCES
   vertex.tags = params[:tags]
+  $redirect = '/view/' + @webIden + '/' + iden #after saving edit, redirect to viewing
   redirect $redirect
 end
 
