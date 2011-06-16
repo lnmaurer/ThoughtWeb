@@ -738,27 +738,30 @@ get '/view/:web_iden/:iden' do
   iden = params[:iden]
   @webIden = params[:web_iden]
   vertex = $webs[@webIden].lookup_vertex(iden)
+  $redirect = '/view/' + @webIden + '/' + iden #don't want to redirect directly to view_document or view_thought since they don't have to logic for vertex == nil
   if vertex == nil #could hapen if you delete the vertex while in viewing mode
     $redirect = '/web/' + @webIden
+    redirect $redirect
   elsif vertex.type == :thought
-    $redirect = '/view_thought/' + @webIden + '/' + iden
+    redirect '/view_thought/' + @webIden + '/' + iden
   elsif vertex.type == :document
-    $redirect = '/view_document/' + @webIden + '/' + iden
+    redirect '/view_document/' + @webIden + '/' + iden
   end
-  redirect $redirect  end
+end
 
 get '/edit/:web_iden/:iden' do
   iden = params[:iden]
   @webIden = params[:web_iden]
   vertex = $webs[@webIden].lookup_vertex(iden)
+  $redirect = '/edit/' + @webIden + '/' + iden #don't want to redirect directly to view_document or view_thought since they don't have to logic for vertex == nil
   if vertex == nil #could hapen if you delete the vertex while in editing mode
     $redirect = '/web/' + @webIden
+    redirect $redirect
   elsif vertex.type == :thought
-    $redirect = '/edit_thought/' + @webIden + '/' + iden
+    redirect '/edit_thought/' + @webIden + '/' + iden
   elsif vertex.type == :document
-    $redirect = '/edit_document/' + @webIden + '/' + iden
+    redirect '/edit_document/' + @webIden + '/' + iden
   end
-  redirect $redirect  
 end
 
 get '/doc/:web_iden/:iden/:filename' do
