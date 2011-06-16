@@ -29,6 +29,8 @@ end
 
 #TODO: IMPROVE UPDATE MECHANISMS SO NOT SO ROUNDABOUT, ESPECIALLY NOW THAT THREADS CAN ADD INFO AFTER DOCUMENTS ARE CREATED
 
+#TODO: ADD EDGE CLASS? CERTAINLY SHOULD HAVE STRENGTH OF LINK, BUT MAYBE ALSO COMMENTS AND TAGS
+
 #TODO: ADD TAGS?
 class Vertex
   attr_reader :iden, :links, :times, :type
@@ -44,7 +46,6 @@ class Vertex
 
      update_times_and_index
   end
-  #name, content, type
   
   def update_index
     #update the index
@@ -128,11 +129,11 @@ class TWDocument < Vertex
     #since OCR is costly, will only OCR it once, and save text in @ocredTxt
     if @ocr
       @ocredTxt = '' #if not done with OCR this gives the 'content' function something to return
-      output = "Performing OCR on #{@filename}:\n"
+      output = "Performing OCR on <em>#{@filename}</em>:\n"
       thread = Thread.new do
 	Dir.mktmpdir do |tempDir|
 	  output << "Starting image format conversion...\n"
-	  Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/tempOCR.tif")
+	  Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/tempOCR.tif") #TODO: don't convert if it's already in the right format
 	  output << "Image format conversion complete!\n"
 	  #the output file will be tempOCR.txt because tesseract adds the '.txt' on it's own
 	  Open3.popen3("tesseract #{tempDir}/tempOCR.tif #{tempDir}/tempOCR") do |stdin, stdout, stderr, wait_thr|
@@ -145,6 +146,14 @@ class TWDocument < Vertex
 	self.update_index
       end
       @web.threads << [thread, output]
+#THE FOLLOWING CODE FOR OCRopus WILL HAVE TO BE UPDATED BEFORE IT CAN REPLACE THE ABOVE TESSERACT CODE
+#the following should work but doesn't because of a bug in tesseract (which OCRopus uses); it should be fixed in tesseract version 3.00, but my version OCRopus doesn't seem to know how to use that yet
+#http://code.google.com/p/tesseract-ocr/issues/detail?id=265#c0
+#TODO: sort file names so they're in the right order
+#   Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/temppdf.png")#TODO: don't convert if it's already in the right format
+#   fileList = %x[ls #{tempDir}/*.png].gsub("\n",' ')
+#   Kernel.system("ocroscript recognize #{fileList} > #{tempDir}/temppdf.hocr")
+#   @ocredTxt = %x[ocroscript hocr-to-text #{tempDir}/temppdf.hocr]
     end
   end
   
@@ -178,6 +187,7 @@ class TWDocument < Vertex
   end
   
   def content
+    #TODO: SAVE CONTENT TO A VARIABLE SO WE DON'T HAVE TO READ IT OUT OF A FILE MULTIPLE TIMES. HOWEVER, DON'T SAVE THAT VARIABLE IN YAML FILES SO THAT IT'S LOADED ONCE WHEN THE WEB IS LOADED
     #TODO: INCLUDE MORE TYPES
     if @mimeType == 'text/plain' #TODO: GET mime/types GEM WORKING SO WE CAN TELL WHAT OTHER TYPES ARE TEXT
       self.read
@@ -232,8 +242,8 @@ class Thought < Vertex
 end
 
 class Web
-  attr_reader :vertices, :searchTerm, :searchType, :iden, :title, :threads
-  attr_accessor :index, :searchNeedsUpdate, :colorBySearch
+  attr_reader :vertices, :searchTerm, :searchType, :iden, :title
+  attr_accessor :index, :searchNeedsUpdate, :colorBySearch, :threads
   
   def path
     'webs/' + @iden + '/'
@@ -242,6 +252,7 @@ class Web
   def self.load(id)
     web = YAML.load(File.open('webs/' + id + '/web.yaml'))
     web.index = Index::Index.new(:path=> 'webs/' + id + '/index.ferret')
+    web.threads = [] #since threads aren't saved in the YAML file
     return web
   end
   
@@ -1022,7 +1033,7 @@ __END__
         =@vertex.reference
         %br
         %a{:href=>"/doc/#{@webIden}/#{@iden}/#{@vertex.filename}"}="Download #{@vertex.filename}"
-        - if @vertex.mimeType != 'text/plain'
+        - if (@vertex.mimeType != 'text/plain') and (not @vertex.content.empty?)
           %br
           %a{:href=>"/doc_content/#{@webIden}/#{@iden}/#{@vertex.filename}.txt"}="Download as plain text"
       %p
