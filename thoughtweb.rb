@@ -41,7 +41,7 @@ class Vertex
     @searchScore = 0.0
     @links = []
     @times = []
-    self.tags=tags
+    @tags = tags.split(',').collect{|s| s.strip} #'tags' is a string
     @type = type
 
      update_times_and_index
@@ -69,6 +69,7 @@ class Vertex
     self.tags_string
   end
   
+  #'t' is a string
   def tags=(t)
     newTags = t.split(',').collect{|s| s.strip}
     if newTags.sort != @tags.sort #order matters for array equality, so sort them before comparing -- I assume the order of tags in the list doesn't matter
