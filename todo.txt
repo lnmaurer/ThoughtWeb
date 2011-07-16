@@ -1,0 +1,8 @@
+Todo:
+-sessions/accounts
+-OCRopus
+-references
+-edges having info
+-grouping
+-javascript
+  -updating
