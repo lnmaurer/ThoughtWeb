@@ -12,11 +12,12 @@ require 'haml'
 require 'sinatra'
 require 'uuid'
 require 'ferret' #actually using the 'jk-ferret' gem
+require 'sanitize'
 # require 'mime/types'
 #other requirements:
 #the program 'pdftotext' from package 'poppler-utils'
 #ImageMagick for converting files to a format that can be OCRed
-#tesseract OCR package (OCRopus code is written but commented out due to a bug in OCRopus)
+#tesseract OCR package (version 2 or 3, OCRopus code is written but commented out due to a bug in OCRopus)
 
 include Math
 include Ferret
@@ -103,8 +104,8 @@ class Vertex
     update_times_and_index if changesMade
   end
   
-  def tags_string(joiner = ',')
-    '' + @tags.inject{|list, tag| list + joiner + ' ' + tag}
+  def tags_string(joiner = ', ')
+    @tags.empty? ? '' : @tags.inject{|list, tag| list + joiner + tag}
   end
 end
 
@@ -153,7 +154,7 @@ class TWDocument < Vertex
 	  Kernel.system("convert -density 400x400 #{quoted_path} #{tempDir}/tempOCR.tif") #TODO: don't convert if it's already in the right format
 	  output << "Image format conversion complete!\n"
 	  #the output file will be tempOCR.txt because tesseract adds the '.txt' on it's own
-	  Open3.popen3("tesseract #{tempDir}/tempOCR.tif #{tempDir}/tempOCR") do |stdin, stdout, stderr, wait_thr|
+	  Open3.popen3("tesseract #{tempDir}/tempOCR.tif #{tempDir}/tempOCR -l eng") do |stdin, stdout, stderr, wait_thr| #TODO: option for other languages
 	    while not stderr.eof
 	      output << stderr.gets #for whatever reason, tesseract outpus on stderr
 	    end
@@ -466,12 +467,12 @@ class Web
       end
       svg << %Q\
 	<svg:a xlink:href="/select/#{@iden}/#{ver.iden}">
-      	  <svg:title>#{content}</svg:title>
+      	  <svg:title>#{Sanitize.clean(content)}</svg:title>
 	  <svg:g transform="translate(#{p[0]},#{p[1]}) scale(-1,1)">
 	    <svg:circle r="50" style="fill: #{fillColor}; stroke: #{strokeColor}; stroke-width: #{strokeWidth}" />
 	    <svg:text font-family="Verdana" font-size="20" fill="black" >
 	      <svg:textPath xlink:href="#cpath">
-		#{ver.name}
+		#{Sanitize.clean(ver.name)}
 	      </svg:textPath>
 	    </svg:text>
 	  </svg:g>
@@ -1033,10 +1034,10 @@ __END__
       %h2 View Thought
       %p
         Title: 
-        =@vertex.title
+        =Sanitize.clean(@vertex.title)
         %br
         Text: 
-        =@vertex.comment
+        =Sanitize.clean(@vertex.comment)
         %br
         =haml(:view_tags)
       %p
@@ -1059,7 +1060,7 @@ __END__
       %h2 View Document
       %p
         Reference: 
-        =@vertex.reference
+        =Sanitize.clean(@vertex.reference)
         %br
         =haml(:view_tags)
         %br
@@ -1172,7 +1173,7 @@ __END__
     
 @@ view_tags
 Tags:
-=@vertex.tags
+=Sanitize.clean(@vertex.tags)
 
 @@ edit_tags
 Tags:

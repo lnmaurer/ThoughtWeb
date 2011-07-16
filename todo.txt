@@ -6,3 +6,4 @@ Todo:
 -grouping
 -javascript
   -updating
+-change sanitizaer so that html gets converted to text instead of getting removed
